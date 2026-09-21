@@ -24,13 +24,21 @@ Things that bite:
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import ipaddress
 import logging
 from urllib.parse import urlsplit
 
 from browser_agent import config
-from browser_agent.snapshot import SNAPSHOT_JS, format_snapshot
+from browser_agent.snapshot import (
+    FIELD_INFO_JS,
+    READ_TEXT_CHARS,
+    READ_TEXT_JS,
+    SNAPSHOT_JS,
+    format_snapshot,
+    is_sensitive_field,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +297,39 @@ class BrowserSession:
         await self._settle()
         return f"{status}\n\n{await self.snapshot()}"
 
+    # -- element refs -------------------------------------------------------
+
+    def _locator(self, ref) -> tuple:
+        """(locator, error). The error is set when the ref is not a number."""
+        try:
+            n = int(str(ref).strip().strip("[]"))
+        except (TypeError, ValueError):
+            return None, (
+                f"'{ref}' is not an element number. Use the [number] from the latest snapshot."
+            )
+        page = self._require_page()
+        return page.locator(f'[data-agent-ref="{n}"]').first, ""
+
+    async def _resolve(self, ref):
+        """Turn [12] into a locator, or explain why it is stale.
+
+        Refs live on the DOM and a re-render wipes them, so the failure mode
+        here is "that number means nothing any more" — which must read as an
+        instruction to look again, never as a click on whatever is at 12 now.
+        """
+        loc, err = self._locator(ref)
+        if err:
+            return None, err
+        try:
+            if await loc.count() == 0:
+                return None, (
+                    f"Element [{ref}] is no longer on the page (it re-rendered). "
+                    "Call get_page and use the new numbers."
+                )
+        except Exception as e:
+            return None, f"Could not find element [{ref}]: {_short_error(e)}"
+        return loc, ""
+
     # -- actions (each returns a string for the model) -----------------------
 
     async def navigate(self, url: str) -> str:
@@ -308,5 +349,188 @@ class BrowserSession:
         status = f" (HTTP {resp.status})" if resp is not None and resp.status >= 400 else ""
         return await self._after(f"Opened {page.url}{status}.")
 
+    async def click(self, ref) -> str:
+        loc, err = await self._resolve(ref)
+        if err:
+            return err
+        try:
+            await loc.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            pass
+        try:
+            await loc.click(timeout=config.ACTION_TIMEOUT_MS)
+        except Exception as first:
+            # Something is covering it — a sticky header, a cookie banner. A
+            # forced click gets what a person scrolling past the overlay would.
+            try:
+                await loc.click(timeout=3000, force=True)
+            except Exception:
+                return await self._after(
+                    f"Click on [{ref}] failed: {_short_error(first)}. "
+                    "If a banner or dialog is in the way, close it first."
+                )
+        return await self._after(f"Clicked [{ref}].")
+
+    async def type_text(self, ref, text: str, press_enter: bool = False) -> str:
+        loc, err = await self._resolve(ref)
+        if err:
+            return err
+        try:
+            info = await loc.evaluate(FIELD_INFO_JS)
+        except Exception as e:
+            return f"Could not inspect [{ref}]: {_short_error(e)}"
+        # A credential, code or payment field is filled like any other when the
+        # task calls for it — signing in IS a task. What changes is the echo:
+        # the value must not come back in the tool result, because that result
+        # is kept in the conversation history, nor appear in a log line. The
+        # snapshot already masks such values.
+        sensitive = is_sensitive_field(info or {})
+        if sensitive:
+            logger.info("Typing into a sensitive field (ref %s)", ref)
+        try:
+            if info and info.get("fillable"):
+                await loc.fill(text or "")
+            else:
+                await loc.click(timeout=config.ACTION_TIMEOUT_MS)
+                await self._require_page().keyboard.type(text or "")
+            if press_enter:
+                await loc.press("Enter")
+        except Exception as e:
+            return await self._after(f"Typing into [{ref}] failed: {_short_error(e)}")
+        if sensitive:
+            shown = "••••"
+        else:
+            shown = (text or "")[:40] + ("…" if len(text or "") > 40 else "")
+        return await self._after(
+            f'Typed "{shown}" into [{ref}]' + (" and pressed Enter." if press_enter else ".")
+        )
+
+    async def select_option(self, ref, option: str) -> str:
+        loc, err = await self._resolve(ref)
+        if err:
+            return err
+        try:
+            await loc.select_option(label=option)
+        except Exception:
+            try:
+                await loc.select_option(value=option)
+            except Exception as e:
+                return (
+                    f"Could not select {option!r} in [{ref}]: {_short_error(e)}. "
+                    "If it is not a real dropdown, click it and pick the option from "
+                    "the list instead."
+                )
+        return await self._after(f"Selected {option!r} in [{ref}].")
+
+    async def press_key(self, key: str) -> str:
+        page = self._require_page()
+        try:
+            await page.keyboard.press(key)
+        except Exception as e:
+            return (
+                f"Could not press {key!r}: {_short_error(e)}. "
+                "Use names like Enter, Escape, Tab, ArrowDown, PageDown."
+            )
+        return await self._after(f"Pressed {key}.")
+
+    async def scroll(self, direction: str = "down", pages: float = 1.0) -> str:
+        page = self._require_page()
+        try:
+            pages = max(0.1, min(float(pages or 1.0), 10.0))
+        except (TypeError, ValueError):
+            pages = 1.0
+        sign = -1 if str(direction).lower().startswith("up") else 1
+        dy = sign * int(pages * config.VIEWPORT_HEIGHT * 0.9)
+        try:
+            # A wheel event over the viewport centre scrolls whatever is under
+            # it — the document, or an inner scroll pane that window.scrollBy
+            # would sail straight past.
+            await page.mouse.move(config.VIEWPORT_WIDTH / 2, config.VIEWPORT_HEIGHT / 2)
+            await page.mouse.wheel(0, dy)
+            await page.wait_for_timeout(300)
+        except Exception as e:
+            return f"Scroll failed: {_short_error(e)}"
+        return f"Scrolled {'up' if sign < 0 else 'down'}.\n\n{await self.snapshot()}"
+
+    async def go_back(self) -> str:
+        page = self._require_page()
+        try:
+            resp = await page.go_back(wait_until="domcontentloaded")
+        except Exception as e:
+            return await self._after(f"Could not go back: {_short_error(e)}")
+        if resp is None and page.url in ("about:blank", ""):
+            return "There is no previous page in this tab."
+        return await self._after("Went back.")
+
     async def get_page(self) -> str:
         return await self.snapshot()
+
+    async def read_text(self, ref: str = "", start: int = 0) -> str:
+        """A chunk of the page's text, for content too long for a snapshot."""
+        page = self._require_page()
+        ref_n = None
+        if str(ref or "").strip():
+            try:
+                ref_n = int(str(ref).strip().strip("[]"))
+            except ValueError:
+                return f"'{ref}' is not an element number."
+        try:
+            start = max(0, int(start or 0))
+        except (TypeError, ValueError):
+            start = 0
+        try:
+            data = await asyncio.wait_for(
+                page.evaluate(READ_TEXT_JS, [ref_n, start, READ_TEXT_CHARS]),
+                timeout=config.SNAPSHOT_TIMEOUT_S,
+            )
+        except Exception as e:
+            return f"Could not read text: {_short_error(e)}"
+        if not data:
+            return f"Element [{ref}] is no longer on the page. Call get_page for fresh numbers."
+        total, chunk = int(data.get("total") or 0), data.get("chunk") or ""
+        if not chunk:
+            if start == 0:
+                return "No text there."
+            return f"Nothing past character {start} (total {total})."
+        end = start + len(chunk)
+        head = f"Text {start}-{end} of {total}"
+        if end < total:
+            head += f" (read_text with start={end} for more)"
+        return head + ":\n" + chunk
+
+    async def screenshot(self) -> str:
+        page = self._require_page()
+        try:
+            raw = await page.screenshot(type="jpeg", quality=config.SCREENSHOT_JPEG_QUALITY)
+        except Exception as e:
+            return f"Screenshot failed: {_short_error(e)}"
+        self.last_screenshot = (base64.b64encode(raw).decode("ascii"), "image/jpeg")
+        return "Screenshot taken — it is attached below this result."
+
+    def take_screenshot(self) -> tuple[str, str] | None:
+        """Pop the last screenshot (base64, mime) for the agent loop to attach."""
+        shot, self.last_screenshot = self.last_screenshot, None
+        return shot
+
+    async def wait(self, seconds: float = 2.0) -> str:
+        page = self._require_page()
+        try:
+            seconds = max(0.5, min(float(seconds or 2.0), config.MAX_WAIT_S))
+        except (TypeError, ValueError):
+            seconds = 2.0
+        await page.wait_for_timeout(int(seconds * 1000))
+        return f"Waited {seconds:g}s.\n\n{await self.snapshot()}"
+
+    async def switch_tab(self, index: int) -> str:
+        try:
+            i = int(index)
+        except (TypeError, ValueError):
+            return "Give the tab number from the Tabs line, e.g. 1."
+        if not (1 <= i <= len(self.pages)):
+            return f"There is no tab {i}. Open tabs: {len(self.pages)}."
+        self.page = self.pages[i - 1]
+        try:
+            await self.page.bring_to_front()
+        except Exception:
+            pass
+        return f"Switched to tab {i}.\n\n{await self.snapshot()}"
