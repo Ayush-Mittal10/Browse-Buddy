@@ -50,9 +50,10 @@ API_KEY = _env_str("ANTHROPIC_API_KEY", "")
 
 MODEL = _env_str("BROWSER_AGENT_MODEL", "claude-opus-5")
 
-# Each turn is a short bit of reasoning plus a tool call, not an essay. The
-# ceiling is here to stop a runaway response, not to shape the answer.
-MAX_TOKENS = _env_int("BROWSER_AGENT_MAX_TOKENS", 4096)
+# Each turn is a short bit of reasoning plus a tool call, not an essay, but this
+# ceiling also has to cover the model's thinking — which is on by default on the
+# current models. It is here to stop a runaway response, not to shape the answer.
+MAX_TOKENS = _env_int("BROWSER_AGENT_MAX_TOKENS", 8192)
 
 
 # --- Agent loop --------------------------------------------------------------

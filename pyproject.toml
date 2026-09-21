@@ -50,6 +50,9 @@ select = ["E", "F", "I", "UP", "B"]
 # snapshot.py embeds browser JavaScript as string literals. Wrapping those lines
 # to Python's limit makes them harder to read, not easier.
 "browser_agent/snapshot.py" = ["E501"]
+# prompts.py is prose sent to the model. Its lines end in backslashes, so
+# rewrapping the source would change the text the model reads.
+"browser_agent/prompts.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import contextvars
 import ipaddress
 import logging
@@ -57,6 +58,21 @@ _current: contextvars.ContextVar[BrowserSession | None] = contextvars.ContextVar
 def current_session() -> BrowserSession | None:
     """The session the tools should act on, or None outside a session block."""
     return _current.get()
+
+
+@contextlib.contextmanager
+def use_session(session: BrowserSession):
+    """Publish `session` as the current one for the duration of the block.
+
+    The async-with form does this on entry, but an agent that keeps one browser
+    across several runs starts and stops the session itself and still needs the
+    tools to find it.
+    """
+    token = _current.set(session)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 # ── URL policy ───────────────────────────────────────────────────────────────
