@@ -46,6 +46,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# snapshot.py embeds browser JavaScript as string literals. Wrapping those lines
+# to Python's limit makes them harder to read, not easier.
+"browser_agent/snapshot.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
