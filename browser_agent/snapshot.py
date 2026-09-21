@@ -57,7 +57,11 @@ SNAPSHOT_JS = r"""
     const aria = clean(el.getAttribute('aria-label')); if (aria) return aria;
     const lab = labelOf(el); if (lab) return lab;
     const ph = clean(el.getAttribute('placeholder')); if (ph) return ph;
-    const tx = clean(el.innerText || el.textContent); if (tx) return tx;
+    // A <select>'s innerText is every option run together, which says nothing
+    // the options list below it doesn't already say. Fall through to its name.
+    if (el.tagName.toLowerCase() !== 'select') {
+      const tx = clean(el.innerText || el.textContent); if (tx) return tx;
+    }
     const own = clean(el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('value') || el.getAttribute('name') || '');
     if (own) return own;
     // Icon-only controls: an <img alt>, an <svg><title>, or a labelled child.

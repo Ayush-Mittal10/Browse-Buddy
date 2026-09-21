@@ -132,6 +132,31 @@ async def test_password_fields_are_flagged_as_sensitive(session, serve) -> None:
     assert "[sensitive field]" in line
 
 
+async def test_a_dropdown_is_named_from_its_label_not_its_options(session, serve) -> None:
+    url = await serve(
+        "<title>T</title><label for='c'>Country</label>"
+        "<select id='c' name='country'>"
+        "<option>India</option><option>Japan</option></select>"
+    )
+    await session.navigate(url)
+    line = next(line for line in (await session.get_page()).splitlines() if "select" in line)
+
+    assert '[1] select "Country"' in line
+    assert "options: India | Japan" in line
+
+
+async def test_an_unlabelled_dropdown_falls_back_to_its_name_attribute(session, serve) -> None:
+    url = await serve(
+        "<title>T</title><select name='country'>"
+        "<option>India</option><option>Japan</option></select>"
+    )
+    await session.navigate(url)
+    out = await session.get_page()
+
+    assert '[1] select "country"' in out
+    assert '"India Japan"' not in out
+
+
 async def test_a_page_with_nothing_to_click_still_renders(session, serve) -> None:
     url = await serve("<title>Plain</title><p>Just words.</p>")
     out = await session.navigate(url)
