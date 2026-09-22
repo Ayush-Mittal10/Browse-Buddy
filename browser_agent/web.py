@@ -61,7 +61,35 @@ MODELS = {
 }
 
 
-def server_providers() -> list[str]:
+# Tasks worth offering a visitor who has not thought of one. They stay inside
+# the default allowlist below, and they are sites that do not fight automation —
+# a demo's first impression should not be a CAPTCHA.
+SUGGESTIONS = [
+    "What is the top story on Hacker News right now?",
+    "How tall is the Eiffel Tower?",
+    "What is the top headline on BBC News?",
+    "Find the Python release notes for the newest version",
+]
+
+
+async def ollama_available(host: str = "") -> bool:
+    """Whether a local Ollama is answering.
+
+    Detected rather than configured, so the local model appears while
+    developing and simply is not there on a server that has no Ollama —
+    it cannot be switched on by accident in the wrong place.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=1.5) as client:
+            response = await client.get(f"{(host or config.OLLAMA_HOST).rstrip('/')}/api/version")
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
+def server_providers(*, local: bool = False) -> list[str]:
     """Providers this server can run without the visitor supplying anything."""
     available = []
     if config.GEMINI_API_KEY:
@@ -70,6 +98,8 @@ def server_providers() -> list[str]:
         available.append("anthropic")
     if config.OPENAI_API_KEY:
         available.append("openai")
+    if local:
+        available.append("ollama")
     return available
 
 
@@ -134,6 +164,9 @@ def build_app():
 
     @asynccontextmanager
     async def lifespan(app):
+        app.state.ollama = await ollama_available()
+        if app.state.ollama:
+            logger.info("A local Ollama is answering; offering it as a provider")
         app.state.browser_error = await browser_works()
         if app.state.browser_error:
             logger.error("No usable browser: %s", app.state.browser_error)
@@ -155,7 +188,7 @@ def build_app():
         """503 when this instance cannot do its job, so it is taken out of
         rotation instead of accepting visitors it will only disappoint."""
         problem = getattr(app.state, "browser_error", "")
-        providers = server_providers()
+        providers = server_providers(local=getattr(app.state, "ollama", False))
         if not providers:
             problem = problem or "no model configured"
         return JSONResponse(
@@ -173,11 +206,14 @@ def build_app():
         return JSONResponse(
             {
                 "version": __version__,
-                "server_providers": server_providers(),
+                "server_providers": server_providers(
+                    local=getattr(app.state, "ollama", False)
+                ),
                 "byok_providers": list(BYOK_PROVIDERS) if config.WEB_ALLOW_BYOK else [],
                 "max_steps": config.WEB_MAX_STEPS,
                 "max_tasks": config.WEB_MAX_TASKS,
                 "models": MODELS,
+                "suggestions": SUGGESTIONS,
                 "allowed_domains": list(config.ALLOWED_DOMAINS),
             }
         )
@@ -224,7 +260,9 @@ def build_app():
                         await browsers.acquire()
                         held = True
                     try:
-                        agent = _make_agent(request, say)
+                        agent = _make_agent(
+                            request, say, local=getattr(app.state, "ollama", False)
+                        )
                     except ValueError as e:
                         say(type="error", text=str(e))
                         browsers.release()
@@ -273,7 +311,7 @@ def build_app():
     return app
 
 
-def _make_agent(request: dict, say) -> BrowserAgent:
+def _make_agent(request: dict, say, *, local: bool = False) -> BrowserAgent:
     """An agent for this visitor, on whichever model they are entitled to."""
     provider = (request.get("provider") or "").strip().lower()
     api_key = (request.get("api_key") or "").strip()
@@ -285,12 +323,12 @@ def _make_agent(request: dict, say) -> BrowserAgent:
         if provider not in BYOK_PROVIDERS:
             allowed = " or ".join(BYOK_PROVIDERS)
             raise ValueError(f"A key can only be given for {allowed}.")
-    elif provider and provider not in server_providers():
+    elif provider and provider not in server_providers(local=local):
         raise ValueError(
             f"This server has no key for {provider}. Provide one, or pick another provider."
         )
     elif not provider:
-        available = server_providers()
+        available = server_providers(local=local)
         if not available:
             raise ValueError("This server has no model configured.")
         provider = available[0]

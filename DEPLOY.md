@@ -17,8 +17,12 @@ private ranges and the cloud metadata endpoint, but on a shared host that is the
 floor, not the ceiling:
 
 ```
-BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,bbc.com,news.ycombinator.com
+BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,news.ycombinator.com,bbc.com,python.org
 ```
+
+Those four are what the built-in suggestion pills use, and none of them fight
+automated browsers — a demo's first impression should not be a CAPTCHA. Add to
+the list rather than replacing it, or the suggestions stop working.
 
 **Cap the spend.** Every step is one API call against your key. Put the demo key
 in its own workspace with a hard monthly limit — the only control that cannot be
@@ -37,7 +41,7 @@ gcloud run deploy browser-agent \
   --timeout 3600 \
   --min-instances 0 \
   --allow-unauthenticated \
-  --set-env-vars 'BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,bbc.com' \
+  --set-env-vars 'BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,news.ycombinator.com,bbc.com,python.org' \
   --set-secrets 'GEMINI_API_KEY=gemini-api-key:latest'
 ```
 

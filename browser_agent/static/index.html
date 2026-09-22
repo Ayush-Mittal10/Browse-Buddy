@@ -111,7 +111,22 @@
   }
   .msg.agent a { color: var(--accent); }
 
-  #composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 8px; align-items: flex-end; }
+  #suggestions {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 10px 12px 0;
+    border-top: 1px solid var(--line);
+  }
+  #suggestions:empty { display: none; }
+  .pill {
+    font-size: 13px; padding: 5px 11px; border-radius: 999px;
+    background: #1c202a; border: 1px solid var(--line); color: var(--dim);
+    cursor: pointer; text-align: left;
+    transition: color .15s, border-color .15s;
+  }
+  .pill:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+  .pill:disabled { opacity: .4; cursor: not-allowed; }
+
+  #composer { padding: 12px; display: flex; gap: 8px; align-items: flex-end; }
   #composer textarea { flex: 1; resize: none; height: 42px; max-height: 140px; overflow-y: auto; }
 
   #stage { flex: 1; display: flex; min-width: 0; background: #0b0d12; }
@@ -157,6 +172,7 @@
 <main>
   <section id="chat">
     <div id="log"></div>
+    <div id="suggestions"></div>
     <div id="composer">
       <textarea id="input" placeholder="Give it a task…" rows="1"></textarea>
       <button id="send" disabled>Run</button>
@@ -191,6 +207,7 @@ const apiKey = document.getElementById('apiKey');
 const hint = document.getElementById('hint');
 const chat = document.getElementById('chat');
 const grip = document.getElementById('grip');
+const suggestions = document.getElementById('suggestions');
 
 let socket = null;
 let state = 'offline';
@@ -283,6 +300,7 @@ function refreshButton() {
   const connected = socket && socket.readyState === WebSocket.OPEN;
   const typed = input.value.trim().length > 0;
 
+  for (const pill of suggestions.children) pill.disabled = busy;
   send.classList.toggle('busy', busy);
   send.disabled = busy || !connected || !typed;
   send.textContent = busy ? 'Running' : 'Run';
@@ -361,6 +379,21 @@ async function loadConfig() {
   if (providers.length) fill(providerSelect, providers, labels);
   else fill(providerSelect, [''], ['no model configured']);
   refreshModels();
+
+  // Somewhere to start for a visitor who has not thought of a task.
+  suggestions.innerHTML = '';
+  for (const text of settings.suggestions || []) {
+    const pill = document.createElement('button');
+    pill.className = 'pill';
+    pill.type = 'button';
+    pill.textContent = text;
+    pill.addEventListener('click', () => {
+      input.value = text;
+      input.focus();
+      refreshButton();
+    });
+    suggestions.appendChild(pill);
+  }
 
   const only = (settings.allowed_domains || []).length
     ? ' · only ' + settings.allowed_domains.join(', ') : '';

@@ -39,8 +39,13 @@ Chat on the left, the live browser on the right. The browser runs on the
 server and is streamed to the page as JPEG frames straight out of Chromium's
 DevTools protocol — headless, so no display stack is needed to host it.
 
+Suggestion pills sit above the input for anyone who has not thought of a task.
+
 Visitors can bring their own Anthropic or OpenAI key; a key typed into the page
-is used for that session only and is never stored, logged or sent back. There
+is used for that session only and is never stored, logged or sent back. A local
+Ollama is offered as a provider when one is answering, which means it is there
+while you develop and simply absent on a server that has none — it cannot be
+exposed by accident. There
 are caps for anything public: concurrent browsers, steps per task, tasks per
 session, an idle timeout, and `BROWSER_AGENT_ALLOWED_DOMAINS` to limit which
 sites it may visit at all.
@@ -73,6 +78,17 @@ It is meaningfully worse than a frontier model at long or fiddly tasks, and it
 cannot look at screenshots, so that tool is not offered to it. The page it is
 shown is deliberately smaller too — a small model handed 120 numbered elements
 picks the wrong one.
+
+## In a container
+
+```bash
+docker build -t browser-agent .
+docker run -p 8080:8080 -e GEMINI_API_KEY=... browser-agent
+```
+
+`/healthz` answers 503 if the image has no working browser, so a bad build
+fails at deploy rather than on someone's first click. See
+[DEPLOY.md](DEPLOY.md) for Cloud Run.
 
 ## Configure
 

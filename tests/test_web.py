@@ -60,6 +60,11 @@ def web(monkeypatch):
     return TestClient(build_app())
 
 
+async def _no_ollama(host: str = "") -> bool:
+    """Whether this developer's machine runs Ollama is nobody's business here."""
+    return False
+
+
 def drain(socket, *, until: str, limit: int = 40) -> list[dict]:
     """Messages up to and including the first of type `until`."""
     seen = []
@@ -335,8 +340,10 @@ def test_healthz_says_ok_when_it_can_work(web, monkeypatch) -> None:
         return ""
 
     # Entered as a context manager so the startup check actually runs; without
-    # that this would only be asserting the default.
+    # that this would only be asserting the default. Ollama is stubbed out
+    # because whether this machine happens to be running one is not the subject.
     monkeypatch.setattr("browser_agent.web.browser_works", fine)
+    monkeypatch.setattr("browser_agent.web.ollama_available", _no_ollama)
     with TestClient(build_app()) as client:
         response = client.get("/healthz")
 
@@ -354,6 +361,7 @@ def test_healthz_reports_a_missing_browser(monkeypatch) -> None:
         return "BrowserUnavailable: Chromium is not installed."
 
     monkeypatch.setattr("browser_agent.web.browser_works", no_browser)
+    monkeypatch.setattr("browser_agent.web.ollama_available", _no_ollama)
     monkeypatch.setattr(config, "GEMINI_API_KEY", "a-key")
 
     with TestClient(build_app()) as client:
@@ -371,6 +379,7 @@ def test_healthz_reports_having_no_model(monkeypatch) -> None:
         return ""
 
     monkeypatch.setattr("browser_agent.web.browser_works", fine)
+    monkeypatch.setattr("browser_agent.web.ollama_available", _no_ollama)
     with TestClient(build_app()) as client:
         response = client.get("/healthz")
 
@@ -415,3 +424,70 @@ def test_flags_beat_the_environment(monkeypatch) -> None:
 
     assert seen["port"] == 7000
     assert seen["host"] == "127.0.0.1"
+
+
+# --- the local model ----------------------------------------------------------
+
+
+async def test_a_reachable_ollama_is_detected() -> None:
+    from browser_agent.web import ollama_available
+
+    # Detected rather than configured, so it appears while developing and is
+    # simply absent on a server that has none — it cannot be switched on by
+    # accident in the wrong place.
+    assert await ollama_available("http://127.0.0.1:1") is False
+
+
+def test_the_local_model_is_only_offered_when_there_is_one(monkeypatch) -> None:
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "k")
+    monkeypatch.setattr(config, "API_KEY", "")
+    monkeypatch.setattr(config, "OPENAI_API_KEY", "")
+
+    assert server_providers(local=False) == ["gemini"]
+    assert server_providers(local=True) == ["gemini", "ollama"]
+
+
+def test_a_server_without_ollama_refuses_to_use_it(web) -> None:
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "go", "provider": "ollama"})
+        error = drain(socket, until="error")[-1]
+    assert "no key for ollama" in error["text"]
+
+
+def test_the_local_model_needs_no_key(monkeypatch) -> None:
+    monkeypatch.setattr("browser_agent.web.BrowserAgent", FakeAgent)
+    FakeAgent.built.clear()
+    _make_agent({"provider": "ollama"}, lambda **kw: None, local=True)
+    assert FakeAgent.built[0]["api_key"] == ""
+
+
+def test_a_key_cannot_be_handed_to_the_local_model(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="anthropic or openai"):
+        _make_agent({"provider": "ollama", "api_key": "sk-x"}, lambda **kw: None, local=True)
+
+
+# --- suggestions --------------------------------------------------------------
+
+
+def test_suggestions_are_offered(web) -> None:
+    suggestions = web.get("/api/config").json()["suggestions"]
+    assert suggestions
+    assert all(isinstance(s, str) and s.strip() for s in suggestions)
+
+
+def test_every_suggestion_names_a_site_the_default_allowlist_permits() -> None:
+    # A pill that cannot run is worse than no pill. These are the domains
+    # DEPLOY.md tells you to allow.
+    from browser_agent.web import SUGGESTIONS
+
+    recommended = {"wikipedia.org", "news.ycombinator.com", "bbc.com", "python.org"}
+    hints = {
+        "hacker news": "news.ycombinator.com",
+        "eiffel": "wikipedia.org",
+        "bbc": "bbc.com",
+        "python": "python.org",
+    }
+    for text in SUGGESTIONS:
+        matched = [site for word, site in hints.items() if word in text.lower()]
+        assert matched, f"no allowlisted site covers: {text}"
+        assert set(matched) <= recommended
