@@ -32,6 +32,7 @@ import logging
 from urllib.parse import urlsplit
 
 from browser_agent import config
+from browser_agent.live import Screencast
 from browser_agent.snapshot import (
     FIELD_INFO_JS,
     READ_TEXT_CHARS,
@@ -145,8 +146,10 @@ class BrowserSession:
     was cancelled.
     """
 
-    def __init__(self, *, headless: bool | None = None):
+    def __init__(self, *, headless: bool | None = None, on_frame=None):
         self.headless = config.HEADLESS if headless is None else headless
+        # A viewer somewhere else watching this run, or nobody.
+        self.live = Screencast(on_frame) if on_frame else None
         self.finished_report: str | None = None  # set by finish_task
         self.page = None
         self.pages: list = []
@@ -209,9 +212,13 @@ class BrowserSession:
         self._context.set_default_navigation_timeout(config.NAV_TIMEOUT_MS)
         self._context.on("page", self._on_new_page)
         self._adopt_page(page)
+        if self.live is not None:
+            await self.live.follow(self._context, page)
         logger.info("Browser session started (headless=%s)", self.headless)
 
     async def close(self) -> None:
+        if self.live is not None:
+            await self.live.stop()
         browser, pw = self._browser, self._pw
         self._browser = self._pw = self._context = None
         self.page, self.pages = None, []
@@ -240,6 +247,17 @@ class BrowserSession:
             page.on("dialog", self._on_dialog)
             page.on("close", lambda p=page: self._on_page_closed(p))
         self.page = page
+        self._follow_live(page)
+
+    def _follow_live(self, page) -> None:
+        """Point the live view at the tab the agent is actually on.
+
+        Scheduled rather than awaited because the places the current tab
+        changes — a popup opening, a tab closing — are synchronous event
+        handlers.
+        """
+        if self.live is not None and self._context is not None and page is not None:
+            asyncio.ensure_future(self.live.follow(self._context, page))
 
     def _on_new_page(self, page) -> None:
         self._adopt_page(page)
@@ -251,6 +269,7 @@ class BrowserSession:
         if self.page is page:
             self.page = self.pages[-1] if self.pages else None
             self.notes.append("The tab you were on closed; showing the previous tab.")
+            self._follow_live(self.page)
 
     def _on_dialog(self, dialog) -> None:
         # Accept confirms and alerts so the page keeps moving, and say what it
@@ -551,6 +570,8 @@ class BrowserSession:
         if not (1 <= i <= len(self.pages)):
             return f"There is no tab {i}. Open tabs: {len(self.pages)}."
         self.page = self.pages[i - 1]
+        if self.live is not None:
+            await self.live.follow(self._context, self.page)
         try:
             await self.page.bring_to_front()
         except Exception:

@@ -130,9 +130,11 @@ def _close_dangling_tool_calls(messages: list[dict], note: str) -> None:
 class BrowserAgent:
     """One browser, one conversation, many runs.
 
-    ``on_text`` receives the model's narration line for each step and ``on_action``
-    the tool it is about to run — both optional, and both there so a caller can
-    show progress without the agent knowing anything about a terminal.
+    Three optional callbacks report what is happening, and between them they
+    are the whole interface a front end needs: ``on_text`` gets the model's
+    narration line, ``on_action`` the tool about to run, and ``on_frame`` a JPEG
+    of the page as it moves. The agent itself knows nothing about a terminal or
+    a socket.
     """
 
     def __init__(
@@ -147,6 +149,7 @@ class BrowserAgent:
         backend: LLM | None = None,
         on_text: Callable[[str], None] | None = None,
         on_action: Callable[[str, dict], None] | None = None,
+        on_frame: Callable[[str, str], None] | None = None,
     ):
         self.headless = config.HEADLESS if headless is None else headless
         self.llm = backend or llm.build(provider, model or "", api_key)
@@ -154,6 +157,7 @@ class BrowserAgent:
         self.timeout_s = config.TIMEOUT_S if timeout_s is None else timeout_s
         self.on_text = on_text
         self.on_action = on_action
+        self.on_frame = on_frame
 
         # A model that cannot see is not offered the camera.
         self.tools = [
@@ -281,7 +285,7 @@ class BrowserAgent:
         first = not self.messages
 
         if self._session is None:
-            self._session = BrowserSession(headless=self.headless)
+            self._session = BrowserSession(headless=self.headless, on_frame=self.on_frame)
             await self._session.start()
 
         if first:

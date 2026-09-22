@@ -184,6 +184,17 @@ MAX_WAIT_S = _env_int("BROWSER_AGENT_MAX_WAIT_S", 10)
 SCREENSHOT_JPEG_QUALITY = _env_int("BROWSER_AGENT_SCREENSHOT_QUALITY", 55)
 
 
+# --- The live view -----------------------------------------------------------
+
+# Frames streamed out of the DevTools protocol, for a viewer watching the run.
+# Measured at ~10fps and ~67 KB/s with these values, from a headless browser.
+LIVE_QUALITY = _env_int("BROWSER_AGENT_LIVE_QUALITY", 50)
+LIVE_MAX_WIDTH = _env_int("BROWSER_AGENT_LIVE_MAX_WIDTH", 1024)
+LIVE_MAX_HEIGHT = _env_int("BROWSER_AGENT_LIVE_MAX_HEIGHT", 640)
+# 1 means every frame Chromium paints. Raise it to thin the stream out.
+LIVE_EVERY_NTH = _env_int("BROWSER_AGENT_LIVE_EVERY_NTH", 1)
+
+
 # --- How much page to show the model -----------------------------------------
 
 # A big model copes with a hundred-odd numbered elements; a small one does not.
