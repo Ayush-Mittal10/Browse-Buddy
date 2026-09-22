@@ -43,6 +43,22 @@ OUTBOX_SIZE = 32
 # this, which is the entire point of putting it on the web.
 BYOK_PROVIDERS = ("anthropic", "openai")
 
+# Models the page offers per provider, first one being the default. A free-text
+# box here just produces typos and a 404 from the provider; this is the set that
+# is known to work with tool calling.
+MODELS = {
+    "gemini": [
+        # The bigger Flash models answer 503 on the free tier most of the time.
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+    ],
+    "anthropic": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+    "openai": ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1-mini", "gpt-4o-mini"],
+    "ollama": ["qwen3:8b", "qwen3:14b", "qwen3:4b"],
+}
+
 
 def server_providers() -> list[str]:
     """Providers this server can run without the visitor supplying anything."""
@@ -113,6 +129,7 @@ def build_app():
                 "byok_providers": list(BYOK_PROVIDERS) if config.WEB_ALLOW_BYOK else [],
                 "max_steps": config.WEB_MAX_STEPS,
                 "max_tasks": config.WEB_MAX_TASKS,
+                "models": MODELS,
                 "allowed_domains": list(config.ALLOWED_DOMAINS),
             }
         )

@@ -288,3 +288,40 @@ def test_the_browser_is_closed_when_the_socket_goes(web) -> None:
 async def _settled() -> bool:
     await asyncio.sleep(0)
     return True
+
+
+# --- what the page is offered to pick from ------------------------------------
+
+
+def test_config_offers_a_model_list_per_provider(web) -> None:
+    models = web.get("/api/config").json()["models"]
+
+    assert set(models) >= {"gemini", "anthropic", "openai", "ollama"}
+    for provider, names in models.items():
+        assert names, f"{provider} has no models listed"
+        assert all(isinstance(name, str) and name for name in names)
+
+
+def test_the_default_model_is_first_in_its_list() -> None:
+    from browser_agent.web import MODELS
+
+    # The page shows the first entry as "default", so it has to match the
+    # default the server would pick on its own.
+    assert MODELS["gemini"][0] == config.GEMINI_MODEL
+    assert MODELS["anthropic"][0] == config.MODEL
+    assert MODELS["openai"][0] == config.OPENAI_MODEL
+    assert MODELS["ollama"][0] == config.OLLAMA_MODEL
+
+
+def test_a_chosen_model_reaches_the_agent(web) -> None:
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "go", "provider": "gemini", "model": "gemini-3.5-flash"})
+        drain(socket, until="report")
+    assert FakeAgent.built[0]["model"] == "gemini-3.5-flash"
+
+
+def test_no_chosen_model_leaves_the_default_alone(web) -> None:
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "go", "provider": "gemini", "model": ""})
+        drain(socket, until="report")
+    assert FakeAgent.built[0]["model"] == ""

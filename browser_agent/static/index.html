@@ -37,14 +37,14 @@
     background: var(--panel);
   }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  header .sub { color: var(--dim); font-size: 13px; }
+  .sub { color: var(--dim); font-size: 13px; }
   header .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
   .dot.running { background: var(--accent); animation: pulse 1.1s infinite; }
   .dot.idle { background: var(--ok); }
   .dot.queued { background: var(--warn); }
-  .dot.error { background: var(--bad); }
+  .dot.error, .dot.offline { background: var(--bad); }
   @keyframes pulse { 50% { opacity: .3; } }
 
   select, input, button, textarea {
@@ -55,48 +55,80 @@
     border-radius: 8px;
     padding: 7px 10px;
   }
-  button { cursor: pointer; background: var(--accent); color: #0b0d12; border: 0; font-weight: 600; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
   input::placeholder, textarea::placeholder { color: #5d6478; }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  /* The button says what it will do: ready, not ready, or busy. */
+  #send {
+    border: 0;
+    font-weight: 600;
+    min-width: 78px;
+    cursor: pointer;
+    background: var(--accent);
+    color: #0b0d12;
+    transition: background .15s, color .15s;
+  }
+  #send:hover:not(:disabled) { background: #8dbcff; }
+  #send:disabled { cursor: not-allowed; background: #232838; color: #5d6478; }
+  #send.busy { background: #232838; color: var(--accent); cursor: progress; }
+  #send.busy::after { content: "…"; }
 
   main { flex: 1; display: flex; min-height: 0; }
 
   #chat {
     width: 420px;
-    min-width: 320px;
+    flex: none;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--line);
     background: var(--panel);
+    min-width: 260px;
   }
   #log { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 
-  .msg { padding: 9px 12px; border-radius: var(--radius); max-width: 92%; white-space: pre-wrap; word-break: break-word; }
-  .msg.you { align-self: flex-end; background: #2a3550; }
+  /* Drag to resize. Findable without being loud. */
+  #grip { flex: none; width: 6px; cursor: col-resize; background: var(--line); transition: background .15s; }
+  #grip:hover, #grip.dragging { background: var(--accent); }
+  body.resizing { cursor: col-resize; user-select: none; }
+
+  .msg { padding: 9px 12px; border-radius: var(--radius); max-width: 92%; word-break: break-word; }
+  .msg.you { align-self: flex-end; background: #2a3550; white-space: pre-wrap; }
   .msg.agent { background: #1c202a; border: 1px solid var(--line); }
   .msg.note { color: var(--dim); font-size: 13px; padding: 2px 4px; background: none; }
-  .msg.step { color: var(--dim); font-size: 13px; padding: 1px 4px; background: none; font-variant-numeric: tabular-nums; }
+  .msg.step { color: var(--dim); font-size: 13px; padding: 1px 4px; background: none; }
   .msg.step b { color: var(--accent); font-weight: 500; }
   .msg.bad { color: var(--bad); background: #2a1a1c; border: 1px solid #45262a; }
 
-  #composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 8px; }
-  #composer textarea { flex: 1; resize: none; height: 44px; max-height: 140px; overflow-y: auto; }
+  /* Rendered markdown inside an agent message. */
+  .msg.agent p { margin: 0 0 8px; }
+  .msg.agent > :last-child { margin-bottom: 0; }
+  .msg.agent ul, .msg.agent ol { margin: 0 0 8px; padding-left: 20px; }
+  .msg.agent li { margin: 3px 0; }
+  .msg.agent h1, .msg.agent h2, .msg.agent h3 { font-size: 15px; margin: 10px 0 6px; }
+  .msg.agent strong { color: #fff; font-weight: 650; }
+  .msg.agent code {
+    background: #0f1115; border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 5px; font-size: 13px;
+  }
+  .msg.agent a { color: var(--accent); }
 
-  #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #0b0d12; }
-  #screen { flex: 1; display: grid; place-items: center; padding: 16px; min-height: 0; }
+  #composer { border-top: 1px solid var(--line); padding: 12px; display: flex; gap: 8px; align-items: flex-end; }
+  #composer textarea { flex: 1; resize: none; height: 42px; max-height: 140px; overflow-y: auto; }
+
+  #stage { flex: 1; display: flex; min-width: 0; background: #0b0d12; }
+  #screen { flex: 1; display: grid; place-items: center; padding: 16px; min-height: 0; min-width: 0; }
   #screen img { max-width: 100%; max-height: 100%; border-radius: var(--radius); box-shadow: 0 8px 40px #0008; }
   #placeholder { color: var(--dim); text-align: center; max-width: 380px; }
-  #placeholder code { background: #1c202a; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
 
   details#settings { border-bottom: 1px solid var(--line); background: var(--panel); }
   details#settings summary { padding: 9px 14px; cursor: pointer; color: var(--dim); font-size: 13px; }
   .fields { padding: 0 14px 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .fields input { flex: 1; min-width: 220px; }
+  .fields input { flex: 1; min-width: 200px; }
   .hint { color: var(--dim); font-size: 12px; width: 100%; margin: 0; }
 
   @media (max-width: 860px) {
     main { flex-direction: column; }
-    #chat { width: auto; border-right: 0; border-bottom: 1px solid var(--line); max-height: 45vh; }
+    #chat { width: auto !important; flex: 1; }
+    #grip { display: none; }
   }
 </style>
 </head>
@@ -106,7 +138,8 @@
   <h1>Browser Agent</h1>
   <span class="sub" id="modelLabel">connecting…</span>
   <div class="right">
-    <span class="dot" id="dot"></span>
+    <span class="sub" id="limits"></span>
+    <span class="dot offline" id="dot"></span>
     <span class="sub" id="stateLabel">offline</span>
   </div>
 </header>
@@ -115,8 +148,8 @@
   <summary>Model &amp; API key</summary>
   <div class="fields">
     <select id="provider"></select>
-    <input id="apiKey" type="password" placeholder="Your API key (optional)" autocomplete="off">
-    <input id="model" placeholder="Model (optional)">
+    <select id="model"></select>
+    <input id="apiKey" type="password" placeholder="Your API key" autocomplete="off">
     <p class="hint" id="hint"></p>
   </div>
 </details>
@@ -126,9 +159,11 @@
     <div id="log"></div>
     <div id="composer">
       <textarea id="input" placeholder="Give it a task…" rows="1"></textarea>
-      <button id="send">Run</button>
+      <button id="send" disabled>Run</button>
     </div>
   </section>
+
+  <div id="grip" title="Drag to resize · double-click to reset"></div>
 
   <section id="stage">
     <div id="screen">
@@ -149,42 +184,120 @@ const send = document.getElementById('send');
 const dot = document.getElementById('dot');
 const stateLabel = document.getElementById('stateLabel');
 const modelLabel = document.getElementById('modelLabel');
+const limitsLabel = document.getElementById('limits');
 const providerSelect = document.getElementById('provider');
+const modelSelect = document.getElementById('model');
 const apiKey = document.getElementById('apiKey');
-const modelInput = document.getElementById('model');
 const hint = document.getElementById('hint');
+const chat = document.getElementById('chat');
+const grip = document.getElementById('grip');
 
 let socket = null;
-let running = false;
-let lastAgentText = '';
+let state = 'offline';
 let frame = null;
 let settings = {};
+let lastAgentText = '';
+
+/* ---------- markdown ----------
+   Small on purpose: agent reports use bold, bullets, links and the odd bit of
+   code, and that is all this renders. Text is escaped FIRST and the formatting
+   applied to the escaped string, so nothing a web page said can become markup
+   here. The agent reads untrusted pages for a living. */
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function inline(text) {
+  let out = escapeHtml(text);
+  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  // Only http(s) links become anchors; anything else stays as plain text.
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return out;
+}
+
+function markdown(text) {
+  const html = [];
+  let list = null;
+  const closeList = () => { if (list) { html.push('</' + list + '>'); list = null; } };
+
+  for (const raw of String(text).split('\n')) {
+    const lineText = raw.trim();
+    if (!lineText) { closeList(); continue; }
+
+    const heading = lineText.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      html.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const bullet = lineText.match(/^[-*•]\s+(.*)$/);
+    const numbered = lineText.match(/^\d+[.)]\s+(.*)$/);
+    if (bullet || numbered) {
+      const want = bullet ? 'ul' : 'ol';
+      if (list !== want) { closeList(); html.push('<' + want + '>'); list = want; }
+      html.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+      continue;
+    }
+
+    closeList();
+    html.push(`<p>${inline(lineText)}</p>`);
+  }
+  closeList();
+  return html.join('');
+}
+
+/* ---------- chat ---------- */
 
 function line(cls, text) {
-  if (cls === 'agent') lastAgentText = text;
   const el = document.createElement('div');
   el.className = 'msg ' + cls;
-  el.textContent = text;
+  if (cls === 'agent') {
+    lastAgentText = text;
+    el.innerHTML = markdown(text);
+  } else {
+    el.textContent = text;
+  }
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
-  return el;
 }
 
 function step(detail) {
   const el = document.createElement('div');
   el.className = 'msg step';
-  el.innerHTML = '<b>→</b> ';
+  el.innerHTML = '<b>&rarr;</b> ';
   el.appendChild(document.createTextNode(detail));
   log.appendChild(el);
   log.scrollTop = log.scrollHeight;
 }
 
-function setState(state) {
-  dot.className = 'dot ' + state;
-  stateLabel.textContent = state;
-  running = state === 'running' || state === 'queued';
-  send.disabled = running;
-  input.disabled = running;
+/* ---------- the Run button says what it will do ---------- */
+
+function refreshButton() {
+  const busy = state === 'running' || state === 'queued';
+  const connected = socket && socket.readyState === WebSocket.OPEN;
+  const typed = input.value.trim().length > 0;
+
+  send.classList.toggle('busy', busy);
+  send.disabled = busy || !connected || !typed;
+  send.textContent = busy ? 'Running' : 'Run';
+  send.title = busy ? 'A task is already running'
+    : !connected ? 'Not connected'
+    : !typed ? 'Type a task first'
+    : 'Run this task';
+}
+
+function setState(next) {
+  state = next;
+  dot.className = 'dot ' + next;
+  stateLabel.textContent = next;
+  input.disabled = next === 'running' || next === 'queued';
+  refreshButton();
 }
 
 function showFrame(data) {
@@ -197,51 +310,109 @@ function showFrame(data) {
   frame.src = 'data:image/jpeg;base64,' + data;
 }
 
-async function loadConfig() {
-  const response = await fetch('/api/config');
-  settings = await response.json();
+/* ---------- settings ---------- */
 
-  const options = [];
-  for (const name of settings.server_providers) options.push([name, name + ' (no key needed)']);
-  for (const name of settings.byok_providers) {
-    if (!settings.server_providers.includes(name)) options.push([name, name + ' (bring your own key)']);
-  }
-  if (!options.length) options.push(['', 'no model configured']);
-
-  providerSelect.innerHTML = '';
-  for (const [value, label] of options) {
+function fill(select, values, labels) {
+  select.innerHTML = '';
+  values.forEach((value, i) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = label;
-    providerSelect.appendChild(option);
-  }
-  updateHint();
-
-  const limits = `${settings.max_steps} steps · ${settings.max_tasks} tasks per session`;
-  const only = settings.allowed_domains.length
-    ? ` · limited to ${settings.allowed_domains.join(', ')}`
-    : '';
-  modelLabel.textContent = limits + only;
+    option.textContent = labels ? labels[i] : value;
+    select.appendChild(option);
+  });
 }
 
-function updateHint() {
+// The header should say what will run before anything has run. Separate from
+// refreshModels, which rebuilds the list and would discard the selection.
+function refreshLabel() {
   const provider = providerSelect.value;
-  const needsKey = !settings.server_providers?.includes(provider);
-  apiKey.style.display = settings.byok_providers?.includes(provider) ? '' : 'none';
+  const chosen = modelSelect.value || (settings.models || {})[provider]?.[0] || '';
+  if (provider) modelLabel.textContent = chosen ? `${provider} · ${chosen}` : provider;
+}
+
+function refreshModels() {
+  const provider = providerSelect.value;
+  const models = (settings.models || {})[provider] || [];
+  // A list, not a text box: a typo here is a 404 from the provider and a
+  // confusing error in the chat.
+  fill(modelSelect, [''].concat(models), ['default'].concat(models));
+  modelSelect.disabled = models.length === 0;
+
+  const needsKey = !(settings.server_providers || []).includes(provider);
+  const canBring = (settings.byok_providers || []).includes(provider);
+  apiKey.style.display = canBring ? '' : 'none';
   apiKey.placeholder = needsKey ? 'Your API key (required)' : 'Your API key (optional)';
   hint.textContent = needsKey
     ? 'Your key is used for this session only — never stored, never logged.'
-    : 'Runs on the host key. Add your own above to use a different model.';
+    : 'Runs on the host key. Pick another provider above to use your own.';
+  refreshLabel();
 }
 
-providerSelect.addEventListener('change', updateHint);
+async function loadConfig() {
+  settings = await (await fetch('/api/config')).json();
+
+  const providers = (settings.server_providers || []).slice();
+  for (const name of settings.byok_providers || []) {
+    if (!providers.includes(name)) providers.push(name);
+  }
+  const labels = providers.map((name) =>
+    settings.server_providers.includes(name) ? name + ' (no key needed)' : name + ' (your key)');
+
+  if (providers.length) fill(providerSelect, providers, labels);
+  else fill(providerSelect, [''], ['no model configured']);
+  refreshModels();
+
+  const only = (settings.allowed_domains || []).length
+    ? ' · only ' + settings.allowed_domains.join(', ') : '';
+  limitsLabel.textContent = `${settings.max_steps} steps · ${settings.max_tasks} tasks${only}`;
+}
+
+providerSelect.addEventListener('change', refreshModels);
+modelSelect.addEventListener('change', refreshLabel);
+
+/* ---------- drag to resize ---------- */
+
+const SAVED_WIDTH = 'browser-agent:chat-width';
+
+function setChatWidth(px) {
+  const width = Math.max(260, Math.min(px, window.innerWidth - 320));
+  chat.style.width = width + 'px';
+  try { localStorage.setItem(SAVED_WIDTH, String(width)); } catch (e) { /* private mode */ }
+}
+
+try {
+  const saved = parseInt(localStorage.getItem(SAVED_WIDTH), 10);
+  if (saved) setChatWidth(saved);
+} catch (e) { /* private mode */ }
+
+grip.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  grip.setPointerCapture(event.pointerId);
+  grip.classList.add('dragging');
+  document.body.classList.add('resizing');
+
+  const move = (e) => setChatWidth(e.clientX - chat.getBoundingClientRect().left);
+  const up = () => {
+    grip.releasePointerCapture(event.pointerId);
+    grip.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+});
+
+grip.addEventListener('dblclick', () => setChatWidth(420));
+
+/* ---------- socket ---------- */
 
 function connect() {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
   socket = new WebSocket(`${scheme}://${location.host}/ws`);
 
   socket.onopen = () => setState('idle');
-  socket.onclose = () => { setState('offline'); send.disabled = true; };
+  socket.onclose = () => setState('offline');
   socket.onerror = () => setState('error');
 
   socket.onmessage = (event) => {
@@ -266,16 +437,17 @@ function connect() {
 
 function submit() {
   const message = input.value.trim();
-  if (!message || running || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (send.disabled || !message) return;
   line('you', message);
   socket.send(JSON.stringify({
     message,
     provider: providerSelect.value,
     api_key: apiKey.value.trim(),
-    model: modelInput.value.trim(),
+    model: modelSelect.value,
   }));
   input.value = '';
   input.style.height = 'auto';
+  refreshButton();
 }
 
 send.addEventListener('click', submit);
@@ -285,6 +457,7 @@ input.addEventListener('keydown', (event) => {
 input.addEventListener('input', () => {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  refreshButton();
 });
 
 loadConfig().then(connect);
