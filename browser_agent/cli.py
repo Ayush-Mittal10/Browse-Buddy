@@ -116,7 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show the browser window instead of running it hidden.",
     )
-    parser.add_argument("--model", default="", help=f"Model to use (default: {config.MODEL}).")
+    parser.add_argument(
+        "--provider",
+        default="",
+        choices=["anthropic", "ollama", "auto"],
+        help="Which model to drive (default: auto — hosted if a key is set, local if not).",
+    )
+    parser.add_argument("--model", default="", help="Model name to use.")
     parser.add_argument(
         "--max-steps",
         type=int,
@@ -187,6 +193,7 @@ async def _run(args: argparse.Namespace) -> int:
     out = Printer()
     agent = BrowserAgent(
         headless=not args.headed,
+        provider=args.provider,
         model=args.model or None,
         max_steps=args.max_steps,
         on_text=None if args.quiet else out.narration,

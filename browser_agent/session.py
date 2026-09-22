@@ -306,7 +306,13 @@ class BrowserSession:
             return f"Could not read the page: {_short_error(e)}. Try wait, then get_page."
         tabs = await self._tab_titles() if len(self.pages) > 1 else None
         notes, self.notes = self.notes, []
-        return format_snapshot(data, tabs=tabs, notes=notes)
+        return format_snapshot(
+            data,
+            tabs=tabs,
+            notes=notes,
+            max_elements=config.MAX_ELEMENTS,
+            max_text=config.MAX_TEXT_CHARS,
+        )
 
     async def _after(self, status: str) -> str:
         """A status line plus the page as it now is — what every action returns."""

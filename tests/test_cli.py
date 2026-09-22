@@ -86,8 +86,29 @@ def test_version_exits_cleanly() -> None:
 
 def test_help_mentions_the_defaults_it_promises() -> None:
     text = build_parser().format_help()
-    assert config.MODEL in text
     assert str(config.MAX_STEPS) in text
+    # The model default depends on the provider, so the help names the
+    # providers rather than a model that may not apply.
+    for provider in ("anthropic", "ollama", "auto"):
+        assert provider in text
+
+
+def test_the_provider_flag_parses() -> None:
+    assert build_parser().parse_args(["--provider", "ollama"]).provider == "ollama"
+    assert build_parser().parse_args([]).provider == ""
+
+
+def test_the_provider_reaches_the_agent(monkeypatch) -> None:
+    seen = {}
+
+    def build(**kwargs):
+        seen.update(kwargs)
+        return FakeAgent(BrowserOutcome("Done.", FINISHED, ""))
+
+    monkeypatch.setattr("browser_agent.cli.BrowserAgent", build)
+    main(["task", "--provider", "ollama"])
+
+    assert seen["provider"] == "ollama"
 
 
 # --- progress lines -----------------------------------------------------------

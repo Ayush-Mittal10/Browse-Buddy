@@ -87,12 +87,29 @@ def _env_bool(name: str, default: bool) -> bool:
 
 # --- LLM ---------------------------------------------------------------------
 
+# "anthropic", "ollama", or "auto" — the hosted model when a key is present and
+# the local one when it is not, so this runs out of the box either way.
+PROVIDER = _env_str("BROWSER_AGENT_PROVIDER", "auto").lower()
+
 # The key is deliberately not required at import time — importing the package
 # should never fail. It is checked when an agent actually needs to talk to the
 # API; see require_api_key() below.
 API_KEY = _env_str("ANTHROPIC_API_KEY", "")
 
 MODEL = _env_str("BROWSER_AGENT_MODEL", "claude-opus-5")
+
+# Local models, via Ollama.
+OLLAMA_HOST = _env_str("BROWSER_AGENT_OLLAMA_HOST", "http://127.0.0.1:11434")
+OLLAMA_MODEL = _env_str("BROWSER_AGENT_OLLAMA_MODEL", "qwen3:8b")
+# Big enough for a dozen steps of page snapshots. Every token of it is KV cache
+# held in memory, so raising this costs RAM whether or not it gets used.
+OLLAMA_NUM_CTX = _env_int("BROWSER_AGENT_OLLAMA_NUM_CTX", 32768)
+# Off by default. Measured on qwen3:8b: 27.7s a step with thinking against 1.7s
+# without, for the same correct tool call. Choosing one element off a page is
+# not a reasoning problem.
+OLLAMA_THINK = _env_bool("BROWSER_AGENT_OLLAMA_THINK", False)
+# A cold prompt on a long history can take minutes before the cache is warm.
+OLLAMA_TIMEOUT_S = _env_int("BROWSER_AGENT_OLLAMA_TIMEOUT_S", 600)
 
 # Each turn is a short bit of reasoning plus a tool call, not an essay, but this
 # ceiling also has to cover the model's thinking — which is on by default on the
@@ -145,6 +162,23 @@ MAX_WAIT_S = _env_int("BROWSER_AGENT_MAX_WAIT_S", 10)
 
 # Low enough to keep the base64 payload small, high enough to read UI text.
 SCREENSHOT_JPEG_QUALITY = _env_int("BROWSER_AGENT_SCREENSHOT_QUALITY", 55)
+
+
+# --- How much page to show the model -----------------------------------------
+
+# A big model copes with a hundred-odd numbered elements; a small one does not.
+# Measured on qwen3:8b: given 120 elements it clicked the wrong one, given 40 it
+# clicked the right one. So the local defaults are deliberately tighter — less
+# page per step, but the right element.
+_LOCAL = PROVIDER == "ollama" or (PROVIDER == "auto" and not API_KEY)
+
+MAX_ELEMENTS = _env_int("BROWSER_AGENT_MAX_ELEMENTS", 40 if _LOCAL else 120)
+MAX_TEXT_CHARS = _env_int("BROWSER_AGENT_MAX_TEXT_CHARS", 1500 if _LOCAL else 3500)
+
+# Asking for the progress line when a turn runs out. It must not double the
+# run, but a local model re-reading a long history from cold is slow, and a
+# wrap-up that times out loses the report the budget was spent earning.
+WRAP_UP_TIMEOUT_S = _env_int("BROWSER_AGENT_WRAP_UP_TIMEOUT_S", 180 if _LOCAL else 40)
 
 
 # --- Storage -----------------------------------------------------------------

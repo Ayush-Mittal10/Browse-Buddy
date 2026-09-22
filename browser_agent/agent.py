@@ -1,10 +1,13 @@
 """The agent loop: one browser and one memory across the turns of a task.
 
-A plain tool loop over the Anthropic Messages API. Each step the model reads the
-page as text, picks an action, and gets the resulting page back — so the history
-grows by a whole snapshot per step. Two things keep that affordable: a cache
-breakpoint on the system prompt, so every step re-reads the prefix at cached
-rates, and screenshot pruning, so old images stop riding along.
+A plain tool loop. Each step the model reads the page as text, picks an action,
+and gets the resulting page back — so the history grows by a whole snapshot per
+step. Two things keep that affordable, and both depend on the history staying
+append-only: the prompt prefix is cached (billed at a discount by a hosted
+model, not recomputed at all by a local one), and old screenshots lose their
+image so a stale JPEG stops riding along.
+
+Which model runs this is llm.py's business, not the loop's.
 
 One agent owns one browser. ``run()`` can be called again and again: the first
 call opens the browser, later calls continue in the same conversation with the
@@ -19,13 +22,15 @@ nothing: the model is asked for a progress line and the browser stays open.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
-from browser_agent import config
+from browser_agent import config, llm
+from browser_agent.llm import LLM, LLMError, ToolResult
 from browser_agent.prompts import FOLLOW_UP_TEMPLATE, SYSTEM_PROMPT, TASK_TEMPLATE
 from browser_agent.session import BrowserSession, BrowserUnavailable, use_session
 from browser_agent.tools import TOOLS, execute_tool
@@ -59,107 +64,64 @@ _NO_REPORT = object()  # the model stopped with empty text
 _FINISHED = object()   # finish_task was called
 _OUT_OF_TIME = object()
 
-# The wrap-up call gets a short leash — it must not double the run.
-_SUMMARY_TIMEOUT_S = 40
+# How many identical actions in a row before the loop says something. Seen live
+# on a local model: eight consecutive scrolls down a Wikipedia article, each one
+# returning a page it had already been given, until the clock ran out. The
+# prompt tells it not to; a model small enough to loop is a model small enough
+# to forget that, so the nudge goes where it cannot be missed — in the result.
+_REPEAT_LIMIT = 3
+
+_STUCK_NOTE = (
+    "[You have now done this exact action {n} times in a row and the page is not changing. "
+    "It is not working. Do something else: use what is already on the page, try a different "
+    "element, or say what you have found.]"
+)
 
 _PRUNED_NOTE = "[An earlier screenshot was removed to save space — take a new one if you need it.]"
 
 
-# ── message helpers ──────────────────────────────────────────────────────────
-
-
-def _serialize_content(blocks) -> list[dict]:
-    """The API's response blocks as plain dicts we can send back and store.
-
-    Every block is kept, including thinking blocks and their signatures: the
-    assistant turn has to go back exactly as it came, or the next request is
-    rejected for a history that does not match what the model produced.
-    """
-    out = []
-    for block in blocks:
-        if hasattr(block, "model_dump"):
-            out.append(block.model_dump(exclude_none=True))
-        else:
-            out.append(dict(block))
-    return out
-
-
-def _extract_text(blocks) -> str:
-    parts = []
-    for block in blocks:
-        btype = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
-        if btype == "text":
-            parts.append(block["text"] if isinstance(block, dict) else block.text)
-    return "\n".join(p for p in parts if p).strip()
-
-
-def _tool_uses(blocks) -> list:
-    return [b for b in blocks if getattr(b, "type", None) == "tool_use"]
-
-
-def _screenshot_result(tool_use_id: str, status: str, shot: tuple[str, str]) -> dict:
-    """A tool_result carrying the image itself, which is where Anthropic wants
-    it — an image in its own user message would break the tool_result pairing."""
-    data, mime = shot
-    return {
-        "type": "tool_result",
-        "tool_use_id": tool_use_id,
-        "content": [
-            {"type": "text", "text": status},
-            {"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}},
-        ],
-    }
+# ── history ──────────────────────────────────────────────────────────────────
 
 
 def _prune_screenshots(messages: list[dict], keep: int = config.MAX_SCREENSHOTS) -> None:
-    """Replace all but the last `keep` screenshots with a one-line note, in place.
+    """Drop the image from all but the last `keep` screenshots, in place.
 
-    Only the tool_result's content changes, so every tool_use keeps its answer.
-    The edit does invalidate the cached prefix from that point, which is the
-    price of not re-sending a stale image on every step from here to the end.
+    Only the result's text and image change, so every tool call keeps its
+    answer. It does cost a cache hit from that point on — the prefix is no
+    longer what it was — which is worth it against re-sending a stale JPEG on
+    every remaining step. Nothing else in the loop edits history, because that
+    append-only property is what keeps a local model fast.
     """
     shots = [
-        block
+        result
         for message in messages
-        if message.get("role") == "user" and isinstance(message.get("content"), list)
-        for block in message["content"]
-        if block.get("type") == "tool_result"
-        and isinstance(block.get("content"), list)
-        and any(part.get("type") == "image" for part in block["content"])
+        if message["role"] == "tool"
+        for result in message["results"]
+        if result.image is not None
     ]
-    for block in (shots[:-keep] if keep > 0 else shots):
-        block["content"] = _PRUNED_NOTE
+    for result in shots[:-keep] if keep > 0 else shots:
+        result.image = None
+        result.text = _PRUNED_NOTE
 
 
 def _close_dangling_tool_calls(messages: list[dict], note: str) -> None:
-    """Answer every tool_use that never got a tool_result.
+    """Answer every tool call that never got a result.
 
-    The API rejects a history with an unanswered tool_use, so a loop cut off
-    mid-batch could not even be asked for a summary without this.
+    A history with an unanswered call is rejected, so a loop cut off mid-batch
+    could not even be asked for a summary without this.
     """
-    last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-    if last is None or not isinstance(last.get("content"), list):
-        return
-    pending = [b["id"] for b in last["content"] if b.get("type") == "tool_use"]
-    if not pending:
+    last = next((m for m in reversed(messages) if m["role"] == "assistant"), None)
+    if last is None or not last.get("tool_calls"):
         return
     answered = {
-        block.get("tool_use_id")
+        result.id
         for message in messages
-        if message.get("role") == "user" and isinstance(message.get("content"), list)
-        for block in message["content"]
-        if block.get("type") == "tool_result"
+        if message["role"] == "tool"
+        for result in message["results"]
     }
-    missing = [i for i in pending if i not in answered]
+    missing = [c for c in last["tool_calls"] if c.id not in answered]
     if missing:
-        messages.append(
-            {
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": i, "content": note} for i in missing
-                ],
-            }
-        )
+        messages.append(llm.tool_results([ToolResult(c.id, c.name, note) for c in missing]))
 
 
 # ── the agent ────────────────────────────────────────────────────────────────
@@ -178,24 +140,36 @@ class BrowserAgent:
         *,
         headless: bool | None = None,
         model: str | None = None,
+        provider: str = "",
         max_steps: int | None = None,
         timeout_s: int | None = None,
+        backend: LLM | None = None,
         on_text: Callable[[str], None] | None = None,
         on_action: Callable[[str, dict], None] | None = None,
     ):
         self.headless = config.HEADLESS if headless is None else headless
-        self.model = model or config.MODEL
+        self.llm = backend or llm.build(provider, model or "")
         self.max_steps = config.MAX_STEPS if max_steps is None else max_steps
         self.timeout_s = config.TIMEOUT_S if timeout_s is None else timeout_s
         self.on_text = on_text
         self.on_action = on_action
+
+        # A model that cannot see is not offered the camera.
+        self.tools = [
+            tool
+            for tool in TOOLS
+            if tool["name"] != "screenshot" or self.llm.supports_images
+        ]
 
         self.messages: list[dict] = []
         self.task = ""
         self.turns = 0
 
         self._session: BrowserSession | None = None
-        self._client = None
+
+    @property
+    def model(self) -> str:
+        return self.llm.name
 
     async def __aenter__(self) -> BrowserAgent:
         return self
@@ -205,33 +179,13 @@ class BrowserAgent:
 
     # -- plumbing -----------------------------------------------------------
 
-    def _anthropic(self):
-        """Built on first use so that importing the package needs no API key."""
-        if self._client is None:
-            import anthropic
-
-            self._client = anthropic.AsyncAnthropic(api_key=config.require_api_key())
-        return self._client
-
-    def _system(self) -> list[dict]:
+    def _system(self) -> str:
         now = datetime.now(ZoneInfo(config.TIMEZONE)).strftime("%Y-%m-%d %H:%M %Z")
-        return [
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT.format(current_datetime=now),
-                # Tools render before the system prompt, so one breakpoint here
-                # caches both — and they are re-sent on every step of every run.
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
+        return SYSTEM_PROMPT.format(current_datetime=now)
 
-    async def _ask(self, messages: list[dict]) -> Any:
-        return await self._anthropic().messages.create(
-            model=self.model,
-            max_tokens=config.MAX_TOKENS,
-            system=self._system(),
-            tools=TOOLS,
-            messages=messages,
+    async def _ask(self):
+        return await self.llm.complete(
+            system=self._system(), tools=self.tools, messages=self.messages
         )
 
     # -- the loop -----------------------------------------------------------
@@ -242,39 +196,35 @@ class BrowserAgent:
         Returns the model's text (it spoke to the user), _FINISHED, _NO_REPORT
         (it stopped with nothing to say), or None (the step cap).
         """
+        recent: list[str] = []
         for step in range(self.max_steps):
-            response = await self._ask(self.messages)
-            self.messages.append(
-                {"role": "assistant", "content": _serialize_content(response.content)}
-            )
+            reply = await self._ask()
+            self.messages.append(llm.assistant(reply))
 
-            text = _extract_text(response.content)
-            if text and self.on_text:
-                self.on_text(text)
+            if reply.text and self.on_text:
+                self.on_text(reply.text)
 
-            calls = _tool_uses(response.content)
-            if not calls:
+            if not reply.tool_calls:
                 logger.info("Replied after %d step(s)", step + 1)
                 # A tool-bound model can end a turn with empty text. That is not
                 # a message to the user; let the wrap-up ask for one.
-                return text or _NO_REPORT
+                return reply.text or _NO_REPORT
 
             results = []
-            for call in calls:
-                args = call.input if isinstance(call.input, dict) else {}
+            for call in reply.tool_calls:
                 if self.on_action:
-                    self.on_action(call.name, args)
-                status = await execute_tool(call.name, args, session)
+                    self.on_action(call.name, call.input)
+                status = await execute_tool(call.name, call.input, session)
+                recent.append(f"{call.name}:{json.dumps(call.input, sort_keys=True, default=str)}")
+                if len(recent) >= _REPEAT_LIMIT and len(set(recent[-_REPEAT_LIMIT:])) == 1:
+                    logger.warning("Repeating %s; nudging", call.name)
+                    status += "\n\n" + _STUCK_NOTE.format(n=_REPEAT_LIMIT)
                 shot = session.take_screenshot() if call.name == "screenshot" else None
-                if shot:
-                    results.append(_screenshot_result(call.id, status, shot))
-                else:
-                    results.append(
-                        {"type": "tool_result", "tool_use_id": call.id, "content": status}
-                    )
+                results.append(ToolResult(call.id, call.name, status, shot))
 
-            self.messages.append({"role": "user", "content": results})
-            _prune_screenshots(self.messages)
+            self.messages.append(llm.tool_results(results))
+            if any(r.image for r in results):
+                _prune_screenshots(self.messages)
 
             # finish_task ends the run here, after the whole batch has been
             # answered, so the history stays well-formed.
@@ -287,34 +237,26 @@ class BrowserAgent:
         """The run is over with nothing said to the user: ask for one line.
 
         The tools stay on the request even though nothing will be executed —
-        dropping them would change the cached prefix and re-read the whole
-        history uncached, to save nothing.
+        dropping them would change the prefix and re-read the whole history
+        from cold, to save nothing.
         """
         _close_dangling_tool_calls(self.messages, f"Cancelled — {reason}.")
         self.messages.append(
-            {
-                "role": "user",
-                "content": (
-                    f"[System: {reason}. This turn is over; tool calls will not be executed "
-                    "now. The browser stays open and you continue on the next turn. Reply in "
-                    "text only, one or two sentences: what you have done so far and what you "
-                    "will do next. If you need anything from the user, ask for it now.]"
-                ),
-            }
+            llm.user(
+                f"[System: {reason}. This turn is over; tool calls will not be executed "
+                "now. The browser stays open and you continue on the next turn. Reply in "
+                "text only, one or two sentences: what you have done so far and what you "
+                "will do next. If you need anything from the user, ask for it now.]"
+            )
         )
         try:
-            response = await asyncio.wait_for(
-                self._ask(self.messages), timeout=_SUMMARY_TIMEOUT_S
-            )
-            self.messages.append(
-                {"role": "assistant", "content": _serialize_content(response.content)}
-            )
-            text = _extract_text(response.content)
-            if text:
-                return text
+            reply = await asyncio.wait_for(self._ask(), timeout=config.WRAP_UP_TIMEOUT_S)
+            self.messages.append(llm.assistant(reply))
+            if reply.text:
+                return reply.text
             logger.warning("Wrap-up returned no text")
         except Exception as e:
-            logger.warning("Wrap-up failed: %s", e)
+            logger.warning("Wrap-up failed: %s: %s", type(e).__name__, e)
         return (
             "Still working on it — the browser is open where I left off; "
             "say 'continue' to carry on."
@@ -365,18 +307,23 @@ class BrowserAgent:
                     human += "\n" + await session.navigate(start_url)
             else:
                 context_line = (
-                    f"Context from the conversation: {context.strip()}\n" if context.strip() else ""
+                    f"Context from the conversation: {context.strip()}\n"
+                    if context.strip()
+                    else ""
                 )
                 human = FOLLOW_UP_TEMPLATE.format(
                     message=message or "continue", context_line=context_line
                 )
                 human += "\n" + await session.get_page()
-            self.messages.append({"role": "user", "content": human})
+            self.messages.append(llm.user(human))
 
             try:
                 result = await asyncio.wait_for(self._run_loop(session), timeout=self.timeout_s)
             except TimeoutError:
                 result = _OUT_OF_TIME
+            except LLMError as e:
+                logger.error("The model call failed: %s", e)
+                return BrowserOutcome(str(e), WAITING, session.current_url())
 
             url = session.current_url()
 
@@ -402,7 +349,8 @@ class BrowserAgent:
             return BrowserOutcome(text, IN_PROGRESS, url)
 
     async def close(self) -> None:
-        """Close the browser. The conversation is kept, so it can be inspected."""
+        """Close the browser and the model client. The conversation is kept."""
         if self._session is not None:
             await self._session.close()
             self._session = None
+        await self.llm.close()
