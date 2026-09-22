@@ -16,6 +16,50 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
 
+def load_dotenv(start: Path | None = None) -> Path | None:
+    """Read the nearest .env into the environment. Returns the file it used.
+
+    Enough of the format to be useful and no more: KEY=value a line, blank
+    lines and # comments skipped, optional surrounding quotes, an optional
+    `export` prefix. Not worth a dependency.
+
+    A variable already set in the environment always wins, so an explicit
+    `export` on the command line beats the file — which is the behaviour people
+    expect when they override something for one run.
+    """
+    directory = (start or Path.cwd()).resolve()
+    for folder in [directory, *directory.parents]:
+        path = folder / ".env"
+        if path.is_file():
+            break
+    else:
+        return None
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.removeprefix("export ").lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+    return path
+
+
+# Read before anything below looks at the environment, so a .env can set any of
+# it. Import-time, because every value here is read once at import too.
+DOTENV_PATH = load_dotenv()
+
+
 def _env_str(name: str, default: str) -> str:
     value = (os.getenv(name) or "").strip()
     return value or default
