@@ -27,6 +27,18 @@ Those four are what the built-in suggestion pills use, and none of them fight
 automated browsers — a demo's first impression should not be a CAPTCHA. Add to
 the list rather than replacing it, or the suggestions stop working.
 
+**Keep the Gemini key in a project with no billing account.** Cloud Run needs
+billing; the Gemini free tier needs the absence of it, and the free tier is
+per-project. Linking a billing account to the project that issued your key moves
+it onto the paid tier, where every call answers
+
+```
+402 RESOURCE_EXHAUSTED — Your prepayment credits are depleted.
+```
+
+They do not have to be the same project. Run the service in the billed one and
+issue the key from another.
+
 **Cap the spend.** Every step is one API call against your key. Put the demo key
 in its own workspace with a hard monthly limit — the only control that cannot be
 coded around. The in-app caps (steps, tasks, concurrent browsers, idle timeout)
@@ -47,10 +59,22 @@ gcloud billing projects link browse-buddy-demo --billing-account=<ID>
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   artifactregistry.googleapis.com secretmanager.googleapis.com
 
-printf '%s' 'YOUR_GEMINI_KEY' | gcloud secrets create gemini-api-key --data-file=-
+gcloud secrets create gemini-api-key --replication-policy=automatic
+grep -m1 '^GEMINI_API_KEY=' .env | cut -d= -f2- | tr -d '"\'' | tr -d '\n' \
+  | gcloud secrets versions add gemini-api-key --data-file=-
 ```
 
-The key goes in through stdin so it never reaches the shell history.
+Read out of `.env` rather than typed, and piped through stdin, so the key never
+reaches the shell history and cannot be mistyped. Check what actually landed
+before deploying, because a wrong value here surfaces much later as
+"API key not valid" and looks like a problem with the key:
+
+```bash
+gcloud secrets versions access latest --secret=gemini-api-key | wc -c
+```
+
+That should be the length of your key. If it is 15, the placeholder went in
+instead of the key.
 
 If the deploy then complains it cannot read the secret, Cloud Run's own service
 account needs to be told it may:
