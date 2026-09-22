@@ -220,3 +220,42 @@ async def test_two_sessions_do_not_see_each_others_page(headless: bool) -> None:
         outer_page = outer.page
         assert current_session() is outer
         assert current_session().page is outer_page
+
+
+# --- how the browser introduces itself ----------------------------------------
+
+
+async def test_the_browser_does_not_announce_that_it_is_headless(session) -> None:
+    # Headless Chromium says "HeadlessChrome/153.0…" in its user agent, and
+    # several large sites read that and refuse to serve it. Google and Bing
+    # both did, which is how this was found.
+    agent = await session.page.evaluate("navigator.userAgent")
+
+    assert "Headless" not in agent
+    assert "Chrome/" in agent
+
+
+async def test_the_version_in_the_user_agent_is_the_real_one(session) -> None:
+    # Derived from the running browser rather than written out by hand, so it
+    # cannot drift into claiming a version that is not there.
+    agent = await session.page.evaluate("navigator.userAgent")
+    version = session._browser.version.replace("HeadlessChrome/", "")
+    assert version in agent
+
+
+async def test_webdriver_is_not_advertised(session) -> None:
+    # One line of JavaScript reads this; the launch flag turns it off.
+    assert await session.page.evaluate("navigator.webdriver") in (False, None)
+
+
+async def test_a_configured_user_agent_wins(monkeypatch) -> None:
+    from browser_agent import config
+    from browser_agent.session import BrowserSession
+
+    monkeypatch.setattr(config, "USER_AGENT", "Mozilla/5.0 (something specific)")
+    s = BrowserSession(headless=True)
+    await s.start()
+    try:
+        assert await s.page.evaluate("navigator.userAgent") == "Mozilla/5.0 (something specific)"
+    finally:
+        await s.close()

@@ -204,11 +204,17 @@ class BrowserSession:
 
         self._pw = await async_playwright().start()
         try:
-            self._browser = await self._pw.chromium.launch(headless=self.headless)
+            self._browser = await self._pw.chromium.launch(
+                headless=self.headless,
+                # Without this, navigator.webdriver is true and the page can
+                # read it in one line.
+                args=["--disable-blink-features=AutomationControlled"],
+            )
             self._context = await self._browser.new_context(
                 viewport=config.VIEWPORT,
                 locale=config.LOCALE,
                 timezone_id=config.TIMEZONE,
+                user_agent=config.USER_AGENT or await self._plausible_user_agent(),
             )
             page = await self._context.new_page()
         except Exception as e:
@@ -229,6 +235,28 @@ class BrowserSession:
         if self.live is not None:
             await self.live.follow(self._context, page)
         logger.info("Browser session started (headless=%s)", self.headless)
+
+    async def _plausible_user_agent(self) -> str | None:
+        """Chromium's own user agent, minus the word that gives the game away.
+
+        Headless Chromium introduces itself as "HeadlessChrome/153.0.…", which
+        a site reads in one line — and several large ones then refuse to serve
+        it. This is not pretending to be a different browser: it is the same
+        Chromium, the same version, just not volunteering that nobody is
+        watching the window. Derived from the live browser rather than written
+        out by hand, so it stays true across versions and platforms.
+        """
+        try:
+            probe = await self._browser.new_context()
+            try:
+                page = await probe.new_page()
+                agent = await page.evaluate("navigator.userAgent")
+            finally:
+                await probe.close()
+        except Exception as e:
+            logger.debug("Could not read the default user agent: %s", e)
+            return None
+        return agent.replace("HeadlessChrome", "Chrome") or None
 
     async def close(self) -> None:
         if self.live is not None:

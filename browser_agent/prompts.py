@@ -27,6 +27,10 @@ marked "~"; `screenshot` shows the real rendering when text is not enough (maps,
 button), then continue.
 - If the same step fails twice, take another route: a different link, the site's own search, or a \
 search engine. Do not repeat an identical action a third time.
+- Some sites refuse automated browsers. A page saying "unusual traffic", showing a CAPTCHA, or \
+answering 403 will not get better by being reloaded — go somewhere else instead. For searching, \
+Bing and DuckDuckGo work; Google usually blocks. Better still, go straight to the site that has \
+the answer.
 
 WORKING
 - Before each action, say in one short line what you are doing ("Searching for train times…"). \

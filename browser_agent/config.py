@@ -159,6 +159,10 @@ VIEWPORT_WIDTH = _env_int("BROWSER_AGENT_VIEWPORT_WIDTH", 1280)
 VIEWPORT_HEIGHT = _env_int("BROWSER_AGENT_VIEWPORT_HEIGHT", 800)
 VIEWPORT = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
+# Empty means Chromium's own, with the word "Headless" taken out of it —
+# see BrowserSession._plausible_user_agent.
+USER_AGENT = _env_str("BROWSER_AGENT_USER_AGENT", "")
+
 LOCALE = _env_str("BROWSER_AGENT_LOCALE", "en-US")
 TIMEZONE = _env_str("BROWSER_AGENT_TIMEZONE", "Asia/Kolkata")
 

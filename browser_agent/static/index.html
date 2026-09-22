@@ -156,10 +156,12 @@ const hint = document.getElementById('hint');
 
 let socket = null;
 let running = false;
+let lastAgentText = '';
 let frame = null;
 let settings = {};
 
 function line(cls, text) {
+  if (cls === 'agent') lastAgentText = text;
   const el = document.createElement('div');
   el.className = 'msg ' + cls;
   el.textContent = text;
@@ -252,7 +254,9 @@ function connect() {
       case 'status':    setState(message.state); break;
       case 'error':     line('bad', message.text); setState('idle'); break;
       case 'report':
-        line('agent', message.text);
+        // When the model answers in text instead of calling finish_task, the
+        // narration and the report are the same words. Show them once.
+        if (message.text && message.text !== lastAgentText) line('agent', message.text);
         if (message.state === 'in_progress') line('note', 'Out of budget — say "continue" to carry on.');
         if (message.state === 'finished') line('note', 'The browser closed. Ask something else to start again.');
         break;
