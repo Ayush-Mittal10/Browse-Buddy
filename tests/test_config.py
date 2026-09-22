@@ -146,3 +146,35 @@ def test_a_missing_key_explains_how_to_set_it(env, monkeypatch) -> None:
         require_api_key()
     assert "ANTHROPIC_API_KEY" in str(exc.value)
     assert ".env" in str(exc.value)
+
+
+# --- lists in environment variables -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "wikipedia.org,news.ycombinator.com,bbc.com",
+        "wikipedia.org news.ycombinator.com bbc.com",
+        " wikipedia.org , news.ycombinator.com ,bbc.com ",
+        "WIKIPEDIA.ORG,News.YCombinator.com,BBC.com",
+        ".wikipedia.org,.news.ycombinator.com,.bbc.com",
+    ],
+)
+def test_a_domain_list_is_read_however_it_was_written(env, raw: str) -> None:
+    # gcloud reads a comma as the separator between environment variables, so a
+    # comma-separated value has to be given with spaces instead. Both work.
+    from browser_agent.config import _env_list
+
+    env.setenv("BROWSER_AGENT_ALLOWED_DOMAINS", raw)
+    assert _env_list("BROWSER_AGENT_ALLOWED_DOMAINS") == (
+        "wikipedia.org",
+        "news.ycombinator.com",
+        "bbc.com",
+    )
+
+
+def test_an_unset_list_is_empty(env) -> None:
+    from browser_agent.config import _env_list
+
+    assert _env_list("BROWSER_AGENT_ALLOWED_DOMAINS") == ()

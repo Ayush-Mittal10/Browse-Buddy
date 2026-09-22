@@ -136,8 +136,13 @@ def test_byok_can_be_turned_off(web, monkeypatch) -> None:
 
 def test_the_page_is_served(web) -> None:
     response = web.get("/")
+
     assert response.status_code == 200
-    assert "Browser Agent" in response.text
+    # Checked by structure rather than by name: what it is called is a product
+    # decision and should not be something a rename has to chase through tests.
+    assert "<title>" in response.text
+    for element in ('id="composer"', 'id="log"', 'id="provider"', 'id="suggestions"'):
+        assert element in response.text
 
 
 def test_server_providers_follows_the_keys(monkeypatch) -> None:

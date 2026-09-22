@@ -20,6 +20,9 @@ floor, not the ceiling:
 BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,news.ycombinator.com,bbc.com,python.org
 ```
 
+Commas or spaces, whichever suits the tool setting it — see the note under the
+deploy command for why that matters to `gcloud`.
+
 Those four are what the built-in suggestion pills use, and none of them fight
 automated browsers — a demo's first impression should not be a CAPTCHA. Add to
 the list rather than replacing it, or the suggestions stop working.
@@ -28,6 +31,36 @@ the list rather than replacing it, or the suggestions stop working.
 in its own workspace with a hard monthly limit — the only control that cannot be
 coded around. The in-app caps (steps, tasks, concurrent browsers, idle timeout)
 reduce the bill; they do not bound it.
+
+## Getting the project ready
+
+Cloud Run needs a billing account even to stay inside the free tier, and it will
+not deploy as a service account borrowed from another project.
+
+```bash
+gcloud auth login                       # as yourself, not a service account
+gcloud projects create browse-buddy-demo --name="Browse Buddy"
+gcloud config set project browse-buddy-demo
+gcloud billing accounts list
+gcloud billing projects link browse-buddy-demo --billing-account=<ID>
+
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com secretmanager.googleapis.com
+
+printf '%s' 'YOUR_GEMINI_KEY' | gcloud secrets create gemini-api-key --data-file=-
+```
+
+The key goes in through stdin so it never reaches the shell history.
+
+If the deploy then complains it cannot read the secret, Cloud Run's own service
+account needs to be told it may:
+
+```bash
+NUM=$(gcloud projects describe browse-buddy-demo --format='value(projectNumber)')
+gcloud secrets add-iam-policy-binding gemini-api-key \
+  --member="serviceAccount:${NUM}-compute@developer.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor
+```
 
 ## Deploy
 
@@ -41,12 +74,21 @@ gcloud run deploy browser-agent \
   --timeout 3600 \
   --min-instances 0 \
   --allow-unauthenticated \
-  --set-env-vars 'BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,news.ycombinator.com,bbc.com,python.org' \
+  --set-env-vars 'BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org news.ycombinator.com bbc.com python.org' \
   --set-secrets 'GEMINI_API_KEY=gemini-api-key:latest'
 ```
 
 Build happens on Cloud Build from the `Dockerfile`; nothing needs Docker
 locally.
+
+Note the **spaces** in the domain list. `gcloud` reads a comma as the separator
+*between* environment variables, so a comma inside a value ends the pair and the
+deploy fails with "Bad syntax for dict arg". The list is read with either
+separator, so spaces are the path of least resistance; `^|^KEY=a,b,c` is the
+alternative if you would rather keep commas.
+
+The service name has to be lowercase with no spaces (`^[a-z]([-a-z0-9]*[a-z0-9])?$`),
+so "Browse Buddy" is rejected and `browse-buddy` is not.
 
 Three of those flags are the ones people get wrong:
 
