@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class OpenAILLM:
     """Talks to any OpenAI-compatible /chat/completions endpoint."""
 
+    provider = "openai"
     supports_images = True
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):

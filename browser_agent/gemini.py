@@ -72,6 +72,7 @@ def _declaration(tool: dict) -> dict:
 
 
 class GeminiLLM:
+    provider = "gemini"
     supports_images = True
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):

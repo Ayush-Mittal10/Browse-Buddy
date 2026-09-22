@@ -111,6 +111,7 @@ def tool_results(results: list[ToolResult]) -> dict:
 
 class LLM(Protocol):
     name: str
+    provider: str
     supports_images: bool
 
     async def complete(self, *, system: str, tools: list[dict], messages: list[dict]) -> Reply: ...
@@ -124,6 +125,7 @@ class LLM(Protocol):
 class AnthropicLLM:
     """The hosted path. Caches the prompt prefix and can read screenshots."""
 
+    provider = "anthropic"
     supports_images = True
 
     def __init__(self, model: str = "", api_key: str = "", max_tokens: int | None = None):

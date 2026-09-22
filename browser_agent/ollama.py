@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 class OllamaLLM:
     """Talks to a local Ollama server over its chat API."""
 
+    provider = "ollama"
+
     # Text-only models cannot read a screenshot. The agent checks this and
     # stops offering the tool rather than letting the model call something
     # that can only disappoint it.

@@ -184,6 +184,31 @@ MAX_WAIT_S = _env_int("BROWSER_AGENT_MAX_WAIT_S", 10)
 SCREENSHOT_JPEG_QUALITY = _env_int("BROWSER_AGENT_SCREENSHOT_QUALITY", 55)
 
 
+# --- Serving this to other people --------------------------------------------
+
+def _env_list(name: str) -> tuple[str, ...]:
+    raw = (os.getenv(name) or "").replace(",", " ").split()
+    return tuple(item.strip().lower().lstrip(".") for item in raw if item.strip())
+
+
+# Empty means any public website. Set it to a handful of hosts before putting
+# this somewhere strangers can type into it: an agent that will visit anything
+# is an open proxy wearing a nice hat.
+ALLOWED_DOMAINS = _env_list("BROWSER_AGENT_ALLOWED_DOMAINS")
+
+# How many browsers may run at once. Each one is a Chromium, so this is really
+# a statement about the box it is on.
+WEB_MAX_SESSIONS = _env_int("BROWSER_AGENT_WEB_MAX_SESSIONS", 2)
+# Tighter than the CLI on purpose: a visitor's runaway task spends the host's
+# tokens, not their own.
+WEB_MAX_STEPS = _env_int("BROWSER_AGENT_WEB_MAX_STEPS", 15)
+WEB_MAX_TASKS = _env_int("BROWSER_AGENT_WEB_MAX_TASKS", 6)
+# A forgotten tab holds a browser open, so hang up on one that goes quiet.
+WEB_IDLE_TIMEOUT_S = _env_int("BROWSER_AGENT_WEB_IDLE_TIMEOUT_S", 300)
+# Whether visitors may supply their own key. Their key, their spend.
+WEB_ALLOW_BYOK = _env_bool("BROWSER_AGENT_WEB_ALLOW_BYOK", True)
+
+
 # --- The live view -----------------------------------------------------------
 
 # Frames streamed out of the DevTools protocol, for a viewer watching the run.

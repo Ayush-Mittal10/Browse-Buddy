@@ -117,7 +117,21 @@ def is_url_allowed(url: str) -> tuple[bool, str]:
         return False, "That address is not a public website."
     if ip is None and "." not in host:
         return False, "That address is not a public website."
+    if config.ALLOWED_DOMAINS and not _in_allowlist(host):
+        allowed = ", ".join(config.ALLOWED_DOMAINS)
+        return False, f"This agent is limited to: {allowed}."
     return True, ""
+
+
+def _in_allowlist(host: str) -> bool:
+    """Whether `host` is an allowed domain or a subdomain of one.
+
+    Matched on label boundaries, so allowing "example.com" does not also allow
+    "notexample.com" — the check has to be about the domain, not the string.
+    """
+    return any(
+        host == domain or host.endswith("." + domain) for domain in config.ALLOWED_DOMAINS
+    )
 
 
 def _normalise_url(url: str) -> str:

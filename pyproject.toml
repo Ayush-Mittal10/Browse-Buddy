@@ -29,9 +29,18 @@ dependencies = [
 
 [project.scripts]
 browser-agent = "browser_agent.cli:main"
+browser-agent-web = "browser_agent.web:main"
 
 [project.optional-dependencies]
+# The CLI stays at two dependencies; the web UI is opt-in.
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
 dev = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",

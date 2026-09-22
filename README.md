@@ -28,6 +28,23 @@ browser-agent --url https://en.wikipedia.org "how tall is the Eiffel Tower?"
 In interactive mode the browser stays open between turns, so answering a
 question it asked continues on the same page instead of starting over.
 
+## Or run it as a web page
+
+```bash
+pip install -e ".[web]"
+browser-agent-web
+```
+
+Chat on the left, the live browser on the right. The browser runs on the
+server and is streamed to the page as JPEG frames straight out of Chromium's
+DevTools protocol — headless, so no display stack is needed to host it.
+
+Visitors can bring their own Anthropic or OpenAI key; a key typed into the page
+is used for that session only and is never stored, logged or sent back. There
+are caps for anything public: concurrent browsers, steps per task, tasks per
+session, an idle timeout, and `BROWSER_AGENT_ALLOWED_DOMAINS` to limit which
+sites it may visit at all.
+
 ## Choosing a model
 
 Four backends. Set a key for any of them and it gets used; set none and it falls
