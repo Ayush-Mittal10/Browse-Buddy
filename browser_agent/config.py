@@ -159,6 +159,14 @@ VIEWPORT_WIDTH = _env_int("BROWSER_AGENT_VIEWPORT_WIDTH", 1280)
 VIEWPORT_HEIGHT = _env_int("BROWSER_AGENT_VIEWPORT_HEIGHT", 800)
 VIEWPORT = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
+# Two flags that a container almost always needs and a laptop never does.
+# Chromium's own sandbox wants privileges a container usually withholds, so it
+# fails to start at all; and /dev/shm is typically 64MB in a container, which
+# Chromium exhausts and then crashes in ways that look like anything but that.
+# The host is already sandboxed in that setting — that is what makes dropping
+# Chromium's own layer acceptable there and not here.
+CONTAINER = _env_bool("BROWSER_AGENT_CONTAINER", False)
+
 # Empty means Chromium's own, with the word "Headless" taken out of it —
 # see BrowserSession._plausible_user_agent.
 USER_AGENT = _env_str("BROWSER_AGENT_USER_AGENT", "")

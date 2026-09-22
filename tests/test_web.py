@@ -325,3 +325,93 @@ def test_no_chosen_model_leaves_the_default_alone(web) -> None:
         socket.send_json({"message": "go", "provider": "gemini", "model": ""})
         drain(socket, until="report")
     assert FakeAgent.built[0]["model"] == ""
+
+
+# --- health -------------------------------------------------------------------
+
+
+def test_healthz_says_ok_when_it_can_work(web, monkeypatch) -> None:
+    async def fine():
+        return ""
+
+    # Entered as a context manager so the startup check actually runs; without
+    # that this would only be asserting the default.
+    monkeypatch.setattr("browser_agent.web.browser_works", fine)
+    with TestClient(build_app()) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["detail"] is None
+    assert body["providers"] == ["gemini"]
+
+
+def test_healthz_reports_a_missing_browser(monkeypatch) -> None:
+    # A deploy whose image has no Chromium should fail while it is still being
+    # deployed, not on the first visitor's first click.
+    async def no_browser():
+        return "BrowserUnavailable: Chromium is not installed."
+
+    monkeypatch.setattr("browser_agent.web.browser_works", no_browser)
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "a-key")
+
+    with TestClient(build_app()) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    assert "Chromium is not installed" in response.json()["detail"]
+
+
+def test_healthz_reports_having_no_model(monkeypatch) -> None:
+    for name in ("GEMINI_API_KEY", "API_KEY", "OPENAI_API_KEY"):
+        monkeypatch.setattr(config, name, "")
+
+    async def fine():
+        return ""
+
+    monkeypatch.setattr("browser_agent.web.browser_works", fine)
+    with TestClient(build_app()) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "no model configured"
+
+
+async def test_the_browser_check_starts_and_stops_a_real_one() -> None:
+    from browser_agent.web import browser_works
+
+    assert await browser_works() == ""
+
+
+# --- how the container is told where to listen --------------------------------
+
+
+def test_the_port_and_host_come_from_the_environment(monkeypatch) -> None:
+    # Cloud Run hands the port over in the environment and expects every
+    # interface; locally neither is wanted.
+    from browser_agent.web import main
+
+    monkeypatch.setenv("PORT", "9123")
+    monkeypatch.setenv("HOST", "0.0.0.0")
+
+    seen = {}
+    monkeypatch.setattr(
+        "uvicorn.run", lambda app, **kw: seen.update(kw)
+    )
+    main([])
+
+    assert seen["port"] == 9123
+    assert seen["host"] == "0.0.0.0"
+
+
+def test_flags_beat_the_environment(monkeypatch) -> None:
+    from browser_agent.web import main
+
+    monkeypatch.setenv("PORT", "9123")
+    seen = {}
+    monkeypatch.setattr("uvicorn.run", lambda app, **kw: seen.update(kw))
+    main(["--port", "7000", "--host", "127.0.0.1"])
+
+    assert seen["port"] == 7000
+    assert seen["host"] == "127.0.0.1"

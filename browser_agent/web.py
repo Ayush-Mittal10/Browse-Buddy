@@ -24,6 +24,7 @@ the environment, because the environment is shared with everyone else here.
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 
 from browser_agent import __version__, config
@@ -106,12 +107,41 @@ async def _pump(websocket, outbox: Outbox) -> None:
         await websocket.send_json(message)
 
 
+async def browser_works() -> str:
+    """Launch a browser once and throw it away. Returns "" or what went wrong.
+
+    Run at startup so a deploy with no Chromium in the image fails while it is
+    still being deployed, rather than on the first visitor's first click.
+    """
+    from browser_agent.session import BrowserSession
+
+    session = BrowserSession(headless=True)
+    try:
+        await session.start()
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    finally:
+        await session.close()
+    return ""
+
+
 def build_app():
     """The FastAPI app. Imported here so the CLI never needs FastAPI installed."""
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.responses import FileResponse, JSONResponse
 
-    app = FastAPI(title="browser-agent", version=__version__)
+    @asynccontextmanager
+    async def lifespan(app):
+        app.state.browser_error = await browser_works()
+        if app.state.browser_error:
+            logger.error("No usable browser: %s", app.state.browser_error)
+        else:
+            logger.info("Browser checked and working")
+        yield
+
+    app = FastAPI(title="browser-agent", version=__version__, lifespan=lifespan)
 
     # One browser per visitor is the real cost here, so the cap is on browsers.
     browsers = asyncio.Semaphore(config.WEB_MAX_SESSIONS)
@@ -119,6 +149,24 @@ def build_app():
     @app.get("/")
     async def index():
         return FileResponse(STATIC / "index.html")
+
+    @app.get("/healthz")
+    async def health():
+        """503 when this instance cannot do its job, so it is taken out of
+        rotation instead of accepting visitors it will only disappoint."""
+        problem = getattr(app.state, "browser_error", "")
+        providers = server_providers()
+        if not providers:
+            problem = problem or "no model configured"
+        return JSONResponse(
+            {
+                "status": "error" if problem else "ok",
+                "detail": problem or None,
+                "version": __version__,
+                "providers": providers,
+            },
+            status_code=503 if problem else 200,
+        )
 
     @app.get("/api/config")
     async def configuration():
@@ -269,8 +317,10 @@ def main(argv: list[str] | None = None) -> int:
         prog="browser-agent-web",
         description="Serve the browser agent as a web page.",
     )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    # Cloud Run and friends hand the port over in the environment and expect
+    # the process to listen on every interface; locally, neither is wanted.
+    parser.add_argument("--host", default=os.getenv("HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000")))
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 

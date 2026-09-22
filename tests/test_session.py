@@ -259,3 +259,34 @@ async def test_a_configured_user_agent_wins(monkeypatch) -> None:
         assert await s.page.evaluate("navigator.userAgent") == "Mozilla/5.0 (something specific)"
     finally:
         await s.close()
+
+
+# --- launch flags -------------------------------------------------------------
+
+
+def test_automation_is_not_advertised_in_the_launch_flags() -> None:
+    from browser_agent.session import _launch_args
+
+    assert "--disable-blink-features=AutomationControlled" in _launch_args()
+
+
+def test_a_container_gets_the_two_flags_it_cannot_run_without(monkeypatch) -> None:
+    from browser_agent import config
+    from browser_agent.session import _launch_args
+
+    monkeypatch.setattr(config, "CONTAINER", True)
+    args = _launch_args()
+
+    # Chromium's sandbox needs privileges a container withholds, and the default
+    # /dev/shm there is small enough that Chromium exhausts it and crashes
+    # somewhere that looks unrelated.
+    assert "--no-sandbox" in args
+    assert "--disable-dev-shm-usage" in args
+
+
+def test_a_laptop_keeps_chromiums_own_sandbox(monkeypatch) -> None:
+    from browser_agent import config
+    from browser_agent.session import _launch_args
+
+    monkeypatch.setattr(config, "CONTAINER", False)
+    assert "--no-sandbox" not in _launch_args()

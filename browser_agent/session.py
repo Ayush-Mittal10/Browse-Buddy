@@ -141,6 +141,21 @@ def _normalise_url(url: str) -> str:
     return url
 
 
+def _launch_args() -> list[str]:
+    """Flags Chromium is started with."""
+    args = [
+        # Without this, navigator.webdriver is true and a page reads it in one
+        # line. Several large sites then refuse to serve us.
+        "--disable-blink-features=AutomationControlled",
+    ]
+    if config.CONTAINER:
+        # Chromium's sandbox needs privileges a container normally withholds,
+        # and /dev/shm is small enough there that Chromium exhausts it and
+        # crashes somewhere unrelated-looking.
+        args += ["--no-sandbox", "--disable-dev-shm-usage"]
+    return args
+
+
 def _short_error(e: BaseException, limit: int = 240) -> str:
     text = " ".join(str(e).split())
     # Playwright puts a multi-line call log after the first sentence; the first
@@ -206,9 +221,7 @@ class BrowserSession:
         try:
             self._browser = await self._pw.chromium.launch(
                 headless=self.headless,
-                # Without this, navigator.webdriver is true and the page can
-                # read it in one line.
-                args=["--disable-blink-features=AutomationControlled"],
+                args=_launch_args(),
             )
             self._context = await self._browser.new_context(
                 viewport=config.VIEWPORT,
