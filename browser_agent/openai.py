@@ -15,7 +15,7 @@ import json
 import logging
 
 from browser_agent import config
-from browser_agent.llm import LLMError, Reply, ToolCall
+from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,8 @@ class OpenAILLM:
             ],
         }
         try:
-            response = await self._http().post(
+            response = await post_with_retry(
+                self._http(),
                 f"{self.base_url}/chat/completions",
                 json=body,
                 headers={"Authorization": f"Bearer {self.api_key}"},

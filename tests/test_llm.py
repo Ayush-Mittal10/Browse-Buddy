@@ -59,13 +59,18 @@ def test_named_providers(monkeypatch) -> None:
     assert isinstance(build("ollama"), OllamaLLM)
 
 
-def test_auto_prefers_the_hosted_model_when_a_key_is_present(monkeypatch) -> None:
+def test_auto_prefers_a_hosted_model_when_a_key_is_present(monkeypatch) -> None:
+    # Every key has to be controlled, not just one: a real key in the
+    # developer's own .env would otherwise decide the answer.
+    monkeypatch.setattr("browser_agent.config.GEMINI_API_KEY", "")
+    monkeypatch.setattr("browser_agent.config.OPENAI_API_KEY", "")
     monkeypatch.setattr("browser_agent.config.API_KEY", "sk-ant-something")
     assert isinstance(build("auto"), AnthropicLLM)
 
 
 def test_auto_falls_back_to_the_local_model(monkeypatch) -> None:
-    monkeypatch.setattr("browser_agent.config.API_KEY", "")
+    for name in ("GEMINI_API_KEY", "OPENAI_API_KEY", "API_KEY"):
+        monkeypatch.setattr(f"browser_agent.config.{name}", "")
     assert isinstance(build("auto"), OllamaLLM)
 
 

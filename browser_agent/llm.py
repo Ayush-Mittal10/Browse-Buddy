@@ -12,6 +12,7 @@ will fail.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -23,6 +24,38 @@ logger = logging.getLogger(__name__)
 
 class LLMError(RuntimeError):
     """The model could not be reached or refused the request."""
+
+
+# Worth trying again: rate limits and the provider being briefly out of
+# capacity. Seen constantly on Gemini's free tier, where the popular models
+# answer 503 "high demand" and then work fine a few seconds later.
+RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
+
+async def post_with_retry(client, url, *, json, headers, attempts: int = 3, delay: float = 2.0):
+    """POST, retrying the statuses that mean "not now" rather than "no"."""
+    response = None
+    for attempt in range(attempts):
+        response = await client.post(url, json=json, headers=headers)
+        if response.status_code not in RETRYABLE:
+            return response
+        if attempt == attempts - 1:
+            break
+        wait = _retry_after(response, delay * (2**attempt))
+        logger.info(
+            "HTTP %s from %s; retrying in %.0fs", response.status_code, url.split("/")[2], wait
+        )
+        await asyncio.sleep(wait)
+    return response
+
+
+def _retry_after(response, fallback: float) -> float:
+    """The server's own advice when it gives any, capped so a run can't stall."""
+    raw = response.headers.get("retry-after", "")
+    try:
+        return min(float(raw), 30.0)
+    except (TypeError, ValueError):
+        return fallback
 
 
 @dataclass

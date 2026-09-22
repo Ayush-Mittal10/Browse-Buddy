@@ -3,11 +3,12 @@
 The one with a usable free tier, which makes it the sensible default for a demo
 somebody else is clicking on.
 
-Its shapes differ from everyone else's in three ways that matter, and each is
+Its shapes differ from everyone else's in four ways that matter, and each is
 handled below: turns are "user" and "model" rather than user and assistant, a
-tool result is a part inside a user turn rather than a role of its own, and the
+tool result is a part inside a user turn rather than a role of its own, the
 function schema is an OpenAPI subset that rejects keys the other providers
-accept — `additionalProperties` among them.
+accept — `additionalProperties` among them — and a function call carries a
+thought signature that has to come back with it on the next request.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import logging
 import uuid
 
 from browser_agent import config
-from browser_agent.llm import LLMError, Reply, ToolCall
+from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +94,17 @@ class GeminiLLM:
             if role == "user":
                 contents.append({"role": "user", "parts": [{"text": message["text"]}]})
             elif role == "assistant":
-                parts: list[dict] = []
-                if message.get("text"):
-                    parts.append({"text": message["text"]})
-                for call in message.get("tool_calls") or []:
-                    parts.append({"functionCall": {"name": call.name, "args": call.input}})
-                # A turn with no parts at all is not a turn Gemini will accept.
+                # Replay the model's own parts when we have them. A functionCall
+                # comes back carrying a thoughtSignature, and sending it again
+                # without one is a 400 — the same contract Anthropic has for
+                # thinking blocks. Rebuilding the part by hand loses it.
+                parts = message.get("raw") or []
+                if not parts:
+                    if message.get("text"):
+                        parts.append({"text": message["text"]})
+                    for call in message.get("tool_calls") or []:
+                        parts.append({"functionCall": {"name": call.name, "args": call.input}})
+                # A turn with no parts at all is not one Gemini will accept.
                 contents.append({"role": "model", "parts": parts or [{"text": ""}]})
             else:
                 parts = []
@@ -128,8 +134,8 @@ class GeminiLLM:
         }
         url = f"{self.base_url}/models/{self.name}:generateContent"
         try:
-            response = await self._http().post(
-                url, json=body, headers={"x-goog-api-key": self.api_key}
+            response = await post_with_retry(
+                self._http(), url, json=body, headers={"x-goog-api-key": self.api_key}
             )
         except Exception as e:
             raise LLMError(f"Could not reach Gemini: {type(e).__name__}: {e}") from e
@@ -138,6 +144,11 @@ class GeminiLLM:
             raise LLMError(
                 "Gemini's free tier is rate limited and this key has hit it. "
                 "Wait a minute, or use a different provider."
+            )
+        if response.status_code == 503:
+            raise LLMError(
+                f"Gemini has no free capacity for {self.name} right now. "
+                "A smaller model (gemini-3.1-flash-lite) is usually available."
             )
         if response.status_code >= 400:
             raise LLMError(f"Gemini returned {response.status_code}: {_detail(response)}")
@@ -155,8 +166,9 @@ class GeminiLLM:
                 raise LLMError(f"Gemini declined the request ({blocked}).")
             return Reply()
 
+        parts = (candidates[0].get("content") or {}).get("parts") or []
         text, calls = [], []
-        for part in (candidates[0].get("content") or {}).get("parts") or []:
+        for part in parts:
             if "text" in part and part["text"]:
                 text.append(part["text"])
             function_call = part.get("functionCall")
@@ -170,7 +182,8 @@ class GeminiLLM:
                         input=function_call.get("args") or {},
                     )
                 )
-        return Reply(text="\n".join(text).strip(), tool_calls=calls, raw=None)
+        # raw is the turn as Gemini rendered it, thought signatures included.
+        return Reply(text="\n".join(text).strip(), tool_calls=calls, raw=parts)
 
     async def close(self) -> None:
         if self._client is not None:

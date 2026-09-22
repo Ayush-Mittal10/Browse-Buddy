@@ -106,7 +106,11 @@ OPENAI_BASE_URL = _env_str("BROWSER_AGENT_OPENAI_BASE_URL", "https://api.openai.
 
 # Gemini. GOOGLE_API_KEY is what Google's own tooling sets, so accept either.
 GEMINI_API_KEY = _env_str("GEMINI_API_KEY", "") or _env_str("GOOGLE_API_KEY", "")
-GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.8-flash")
+# Flash-lite rather than the bigger Flash models on purpose: measured on the
+# free tier, gemini-3.8-flash, gemini-3.5-flash and gemini-flash-latest all
+# answered 503 "high demand" while flash-lite answered in 1.2s. A default
+# that is usually unavailable is not a default.
+GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_BASE_URL = _env_str(
     "BROWSER_AGENT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )

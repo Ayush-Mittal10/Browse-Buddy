@@ -275,3 +275,118 @@ async def test_gemini_without_a_key_says_so() -> None:
     with pytest.raises(LLMError) as exc:
         await backend.complete(system="s", tools=[], messages=[user("hi")])
     assert "GEMINI_API_KEY" in str(exc.value)
+
+
+# --- Gemini thought signatures ------------------------------------------------
+
+
+def test_a_model_turn_is_replayed_exactly_as_it_arrived() -> None:
+    # Gemini attaches a thoughtSignature to every functionCall and rejects the
+    # next request if it comes back without one. Rebuilding the part by hand
+    # loses it, so the turn has to be replayed verbatim.
+    raw = [
+        {"text": "Searching."},
+        {
+            "functionCall": {"name": "click", "args": {"ref": 4}},
+            "thoughtSignature": "SIGNATURE",
+        },
+    ]
+    messages = [assistant(Reply("Searching.", [ToolCall("call_a", "click", {"ref": 4})], raw))]
+
+    contents = GeminiLLM()._render(messages)
+
+    assert contents[0]["parts"] == raw
+    assert contents[0]["parts"][1]["thoughtSignature"] == "SIGNATURE"
+
+
+def test_a_turn_without_raw_parts_is_still_rebuilt() -> None:
+    # Synthetic turns — a cancelled call, a replayed transcript — have no raw.
+    messages = [assistant(Reply("hi", [ToolCall("a", "click", {"ref": 1})], raw=None))]
+    parts = GeminiLLM()._render(messages)[0]["parts"]
+    assert parts == [{"text": "hi"}, {"functionCall": {"name": "click", "args": {"ref": 1}}}]
+
+
+def test_the_reply_carries_the_raw_parts_forward() -> None:
+    # Whatever complete() returns as raw is what _render sends back, so the two
+    # have to agree on the shape.
+    raw = [{"functionCall": {"name": "click", "args": {}}, "thoughtSignature": "S"}]
+    assert GeminiLLM()._render([assistant(Reply("", [], raw))])[0]["parts"] == raw
+
+
+# --- retrying -----------------------------------------------------------------
+
+
+class FakeResponse:
+    def __init__(self, status_code: int, headers: dict | None = None):
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+class FakeClient:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def post(self, url, **kwargs):
+        self.calls += 1
+        return self.responses.pop(0) if self.responses else FakeResponse(200)
+
+
+async def test_a_good_response_is_not_retried() -> None:
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(FakeResponse(200))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={})
+
+    assert response.status_code == 200
+    assert client.calls == 1
+
+
+async def test_a_refusal_is_not_retried() -> None:
+    from browser_agent.llm import post_with_retry
+
+    # 400 means "no", not "not now" — retrying it just wastes the run's clock.
+    client = FakeClient(FakeResponse(400))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={})
+
+    assert response.status_code == 400
+    assert client.calls == 1
+
+
+async def test_high_demand_is_retried_and_can_succeed() -> None:
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(FakeResponse(503), FakeResponse(200))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+
+    assert response.status_code == 200
+    assert client.calls == 2
+
+
+async def test_retrying_gives_up_and_hands_back_the_last_failure() -> None:
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(FakeResponse(503), FakeResponse(503), FakeResponse(503))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+
+    assert response.status_code == 503
+    assert client.calls == 3
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+async def test_every_transient_status_is_retried(status: int) -> None:
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(FakeResponse(status), FakeResponse(200))
+    await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+    assert client.calls == 2
+
+
+def test_the_servers_own_retry_advice_is_used_but_capped() -> None:
+    from browser_agent.llm import _retry_after
+
+    assert _retry_after(FakeResponse(429, {"retry-after": "7"}), 2.0) == 7.0
+    # A server asking for an hour must not stall the whole run.
+    assert _retry_after(FakeResponse(429, {"retry-after": "3600"}), 2.0) == 30.0
+    assert _retry_after(FakeResponse(429, {"retry-after": "soon"}), 2.0) == 2.0
+    assert _retry_after(FakeResponse(429), 2.0) == 2.0
