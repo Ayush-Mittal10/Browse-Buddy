@@ -71,6 +71,24 @@ def _declaration(tool: dict) -> dict:
     return declaration
 
 
+# Free-tier capacity moves around between models, so when one has none another
+# usually does. Smallest first, because the small ones are the least contended.
+_BY_CONTENTION = (
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.8-flash",
+)
+
+
+def _try_instead(current: str) -> str:
+    """A model worth suggesting when `current` has no capacity — never itself."""
+    for name in _BY_CONTENTION:
+        if name != current:
+            return name
+    return ""
+
+
 class GeminiLLM:
     provider = "gemini"
     supports_images = True
@@ -147,9 +165,11 @@ class GeminiLLM:
                 "Wait a minute, or use a different provider."
             )
         if response.status_code == 503:
+            instead = _try_instead(self.name)
             raise LLMError(
                 f"Gemini has no free capacity for {self.name} right now. "
-                "A smaller model (gemini-3.1-flash-lite) is usually available."
+                + (f"Try again in a moment, or switch to {instead}." if instead
+                   else "Try again in a moment.")
             )
         if response.status_code >= 400:
             raise LLMError(f"Gemini returned {response.status_code}: {_detail(response)}")

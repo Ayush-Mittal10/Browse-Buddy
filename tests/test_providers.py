@@ -390,3 +390,30 @@ def test_the_servers_own_retry_advice_is_used_but_capped() -> None:
     assert _retry_after(FakeResponse(429, {"retry-after": "3600"}), 2.0) == 30.0
     assert _retry_after(FakeResponse(429, {"retry-after": "soon"}), 2.0) == 2.0
     assert _retry_after(FakeResponse(429), 2.0) == 2.0
+
+
+# --- running out of free capacity ---------------------------------------------
+
+
+def test_the_suggested_model_is_never_the_one_that_just_failed() -> None:
+    # The first version of this message suggested gemini-3.1-flash-lite, which
+    # stopped making sense the day that became the default: it told you to
+    # switch to the model that had just run out of capacity.
+    from browser_agent.gemini import _BY_CONTENTION, _try_instead
+
+    for model in _BY_CONTENTION:
+        assert _try_instead(model) != model
+        assert _try_instead(model) in _BY_CONTENTION
+
+
+def test_an_unknown_model_still_gets_a_suggestion() -> None:
+    from browser_agent.gemini import _try_instead
+
+    assert _try_instead("gemini-9-something") == "gemini-3.1-flash-lite"
+
+
+def test_the_default_model_is_the_least_contended_one() -> None:
+    from browser_agent import config
+    from browser_agent.gemini import _BY_CONTENTION
+
+    assert _BY_CONTENTION[0] == config.GEMINI_MODEL

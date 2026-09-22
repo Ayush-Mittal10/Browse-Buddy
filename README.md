@@ -86,7 +86,7 @@ docker build -t browser-agent .
 docker run -p 8080:8080 -e GEMINI_API_KEY=... browser-agent
 ```
 
-`/healthz` answers 503 if the image has no working browser, so a bad build
+`/health` answers 503 if the image has no working browser, so a bad build
 fails at deploy rather than on someone's first click. See
 [DEPLOY.md](DEPLOY.md) for Cloud Run.
 

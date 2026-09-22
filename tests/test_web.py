@@ -340,6 +340,20 @@ def test_no_chosen_model_leaves_the_default_alone(web) -> None:
 # --- health -------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("path", ["/health", "/healthz"])
+def test_health_is_served_on_both_paths(web, monkeypatch, path: str) -> None:
+    # /healthz is the convention, but Google's frontend swallows that exact
+    # path on Cloud Run and the request never reaches the container. /health
+    # is the one that works everywhere, so both are served.
+    async def fine():
+        return ""
+
+    monkeypatch.setattr("browser_agent.web.browser_works", fine)
+    monkeypatch.setattr("browser_agent.web.ollama_available", _no_ollama)
+    with TestClient(build_app()) as client:
+        assert client.get(path).status_code == 200
+
+
 def test_healthz_says_ok_when_it_can_work(web, monkeypatch) -> None:
     async def fine():
         return ""

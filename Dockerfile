@@ -39,6 +39,6 @@ EXPOSE 8080
 # visitor reports into a deploy that refuses to go live.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request,os,sys; \
-sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/healthz', timeout=8).status == 200 else 1)"
+sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8080\")}/health', timeout=8).status == 200 else 1)"
 
 CMD ["browser-agent-web"]

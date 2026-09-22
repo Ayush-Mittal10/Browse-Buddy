@@ -183,6 +183,11 @@ def build_app():
     async def index():
         return FileResponse(STATIC / "index.html")
 
+    # Two paths for one check. /healthz is the convention and works locally and
+    # under Docker, but Google's frontend swallows that exact path on Cloud Run
+    # — the request never reaches the container and the caller gets Google's own
+    # 404 page instead. /health is the one that works everywhere.
+    @app.get("/health")
     @app.get("/healthz")
     async def health():
         """503 when this instance cannot do its job, so it is taken out of
