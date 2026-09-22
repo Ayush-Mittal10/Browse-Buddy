@@ -93,8 +93,9 @@ class AnthropicLLM:
 
     supports_images = True
 
-    def __init__(self, model: str = "", max_tokens: int | None = None):
+    def __init__(self, model: str = "", api_key: str = "", max_tokens: int | None = None):
         self.name = model or config.MODEL
+        self.api_key = api_key
         self.max_tokens = max_tokens or config.MAX_TOKENS
         self._client = None
 
@@ -102,7 +103,8 @@ class AnthropicLLM:
         if self._client is None:
             import anthropic
 
-            self._client = anthropic.AsyncAnthropic(api_key=config.require_api_key())
+            key = self.api_key or config.require_api_key()
+            self._client = anthropic.AsyncAnthropic(api_key=key)
         return self._client
 
     def _render(self, messages: list[dict]) -> list[dict]:
@@ -173,20 +175,52 @@ def _result_block(result: ToolResult) -> dict:
 # ── choosing one ─────────────────────────────────────────────────────────────
 
 
-def build(provider: str = "", model: str = "") -> LLM:
-    """The backend named by `provider`, or the one this machine can actually use.
+PROVIDERS = ("anthropic", "openai", "gemini", "ollama")
 
-    "auto" picks the hosted model when an API key is present and the local one
-    otherwise, so the thing runs out of the box either way.
+
+def resolve(provider: str = "", *, keys: dict[str, str] | None = None) -> str:
+    """Which provider to actually use.
+
+    "auto" takes the first hosted one there is a key for and falls back to the
+    local model, so this runs whatever the person happens to have. The order is
+    deliberate: Gemini first, because its free tier is the one a stranger can
+    use without paying for it.
     """
     provider = (provider or config.PROVIDER).strip().lower()
-    if provider == "auto":
-        provider = "anthropic" if config.API_KEY else "ollama"
+    if provider != "auto":
+        return provider
+    keys = keys or {}
+    for name, configured in (
+        ("gemini", config.GEMINI_API_KEY),
+        ("anthropic", config.API_KEY),
+        ("openai", config.OPENAI_API_KEY),
+    ):
+        if keys.get(name) or configured:
+            return name
+    return "ollama"
+
+
+def build(provider: str = "", model: str = "", api_key: str = "") -> LLM:
+    """The backend to run this task on.
+
+    `api_key` is passed in rather than read from the environment so that a
+    caller serving several people at once — a web front end where each brings
+    their own key — never has to put one in a process-wide variable.
+    """
+    provider = resolve(provider, keys={provider: api_key} if api_key else None)
 
     if provider == "anthropic":
-        return AnthropicLLM(model)
+        return AnthropicLLM(model, api_key=api_key)
+    if provider == "openai":
+        from browser_agent.openai import OpenAILLM
+
+        return OpenAILLM(model, api_key=api_key)
+    if provider == "gemini":
+        from browser_agent.gemini import GeminiLLM
+
+        return GeminiLLM(model, api_key=api_key)
     if provider == "ollama":
         from browser_agent.ollama import OllamaLLM
 
         return OllamaLLM(model)
-    raise LLMError(f"Unknown provider {provider!r}. Use 'anthropic' or 'ollama'.")
+    raise LLMError(f"Unknown provider {provider!r}. Use one of: {', '.join(PROVIDERS)}.")

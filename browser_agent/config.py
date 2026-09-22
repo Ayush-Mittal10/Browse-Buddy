@@ -87,8 +87,9 @@ def _env_bool(name: str, default: bool) -> bool:
 
 # --- LLM ---------------------------------------------------------------------
 
-# "anthropic", "ollama", or "auto" — the hosted model when a key is present and
-# the local one when it is not, so this runs out of the box either way.
+# "anthropic", "openai", "gemini", "ollama", or "auto" — the first hosted
+# provider with a key, falling back to the local model, so this runs out of the
+# box whatever you happen to have.
 PROVIDER = _env_str("BROWSER_AGENT_PROVIDER", "auto").lower()
 
 # The key is deliberately not required at import time — importing the package
@@ -97,6 +98,21 @@ PROVIDER = _env_str("BROWSER_AGENT_PROVIDER", "auto").lower()
 API_KEY = _env_str("ANTHROPIC_API_KEY", "")
 
 MODEL = _env_str("BROWSER_AGENT_MODEL", "claude-opus-5")
+
+# OpenAI.
+OPENAI_API_KEY = _env_str("OPENAI_API_KEY", "")
+OPENAI_MODEL = _env_str("BROWSER_AGENT_OPENAI_MODEL", "gpt-5.4-mini")
+OPENAI_BASE_URL = _env_str("BROWSER_AGENT_OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+# Gemini. GOOGLE_API_KEY is what Google's own tooling sets, so accept either.
+GEMINI_API_KEY = _env_str("GEMINI_API_KEY", "") or _env_str("GOOGLE_API_KEY", "")
+GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_BASE_URL = _env_str(
+    "BROWSER_AGENT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
+)
+
+# How long to wait on a hosted provider.
+HTTP_TIMEOUT_S = _env_int("BROWSER_AGENT_HTTP_TIMEOUT_S", 120)
 
 # Local models, via Ollama.
 OLLAMA_HOST = _env_str("BROWSER_AGENT_OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -170,7 +186,8 @@ SCREENSHOT_JPEG_QUALITY = _env_int("BROWSER_AGENT_SCREENSHOT_QUALITY", 55)
 # Measured on qwen3:8b: given 120 elements it clicked the wrong one, given 40 it
 # clicked the right one. So the local defaults are deliberately tighter — less
 # page per step, but the right element.
-_LOCAL = PROVIDER == "ollama" or (PROVIDER == "auto" and not API_KEY)
+_ANY_HOSTED_KEY = bool(API_KEY or OPENAI_API_KEY or GEMINI_API_KEY)
+_LOCAL = PROVIDER == "ollama" or (PROVIDER == "auto" and not _ANY_HOSTED_KEY)
 
 MAX_ELEMENTS = _env_int("BROWSER_AGENT_MAX_ELEMENTS", 40 if _LOCAL else 120)
 MAX_TEXT_CHARS = _env_int("BROWSER_AGENT_MAX_TEXT_CHARS", 1500 if _LOCAL else 3500)

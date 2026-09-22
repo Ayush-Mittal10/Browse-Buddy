@@ -141,6 +141,7 @@ class BrowserAgent:
         headless: bool | None = None,
         model: str | None = None,
         provider: str = "",
+        api_key: str = "",
         max_steps: int | None = None,
         timeout_s: int | None = None,
         backend: LLM | None = None,
@@ -148,7 +149,7 @@ class BrowserAgent:
         on_action: Callable[[str, dict], None] | None = None,
     ):
         self.headless = config.HEADLESS if headless is None else headless
-        self.llm = backend or llm.build(provider, model or "")
+        self.llm = backend or llm.build(provider, model or "", api_key)
         self.max_steps = config.MAX_STEPS if max_steps is None else max_steps
         self.timeout_s = config.TIMEOUT_S if timeout_s is None else timeout_s
         self.on_text = on_text

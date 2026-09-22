@@ -15,7 +15,7 @@ import asyncio
 import logging
 import sys
 
-from browser_agent import __version__, config
+from browser_agent import __version__, config, llm
 from browser_agent.agent import FINISHED, IN_PROGRESS, BrowserAgent, BrowserUnavailable
 
 _QUIT = {"quit", "exit", "q", ":q"}
@@ -119,8 +119,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--provider",
         default="",
-        choices=["anthropic", "ollama", "auto"],
-        help="Which model to drive (default: auto — hosted if a key is set, local if not).",
+        choices=[*llm.PROVIDERS, "auto"],
+        help="Which model to drive (default: auto — the first one you have a key for).",
     )
     parser.add_argument("--model", default="", help="Model name to use.")
     parser.add_argument(

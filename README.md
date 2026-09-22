@@ -30,13 +30,25 @@ question it asked continues on the same page instead of starting over.
 
 ## Choosing a model
 
-Set `ANTHROPIC_API_KEY` and it uses a hosted model. Set nothing, and it falls
-back to a local one through [Ollama](https://ollama.com):
+Four backends. Set a key for any of them and it gets used; set none and it falls
+back to a model on your own machine.
+
+| Provider | Key | Notes |
+|---|---|---|
+| `gemini` | `GEMINI_API_KEY` | has a free tier — no card |
+| `anthropic` | `ANTHROPIC_API_KEY` | strongest on long tasks |
+| `openai` | `OPENAI_API_KEY` | any OpenAI-compatible endpoint |
+| `ollama` | — | runs locally, free, no key |
 
 ```bash
+browser-agent --provider gemini "how tall is the Eiffel Tower?"
+
 ollama pull qwen3:8b
 browser-agent --provider ollama "how tall is the Eiffel Tower?"
 ```
+
+`--provider auto` (the default) takes the first one you have a key for, Gemini
+first, and drops to the local model when there is none.
 
 A local 8B model runs this at roughly two seconds a step on Apple silicon,
 because the conversation only ever grows at the end and the KV cache is reused.
