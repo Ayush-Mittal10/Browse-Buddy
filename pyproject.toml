@@ -26,6 +26,9 @@ dependencies = [
     "playwright>=1.44.0",
 ]
 
+[project.scripts]
+browser-agent = "browser_agent.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
