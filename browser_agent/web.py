@@ -174,7 +174,7 @@ def build_app():
             logger.info("Browser checked and working")
         yield
 
-    app = FastAPI(title="browser-agent", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Browse Buddy", version=__version__, lifespan=lifespan)
 
     # One browser per visitor is the real cost here, so the cap is on browsers.
     browsers = asyncio.Semaphore(config.WEB_MAX_SESSIONS)
@@ -357,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="browser-agent-web",
+        prog="browse-buddy-web",
         description="Serve the browser agent as a web page.",
     )
     # Cloud Run and friends hand the port over in the environment and expect

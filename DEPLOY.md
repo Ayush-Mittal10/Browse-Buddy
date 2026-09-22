@@ -89,7 +89,7 @@ gcloud secrets add-iam-policy-binding gemini-api-key \
 ## Deploy
 
 ```bash
-gcloud run deploy browser-agent \
+gcloud run deploy browse-buddy \
   --source . \
   --region asia-south1 \
   --memory 2Gi \
@@ -128,7 +128,7 @@ image — `.dockerignore` keeps `.env` out of the build context.
 ## Check it actually came up
 
 ```bash
-curl -s "$(gcloud run services describe browser-agent --region asia-south1 \
+curl -s "$(gcloud run services describe browse-buddy --region asia-south1 \
   --format 'value(status.url)')/healthz"
 ```
 

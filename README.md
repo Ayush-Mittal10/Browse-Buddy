@@ -1,4 +1,4 @@
-# browser-agent
+# Browse Buddy
 
 An LLM-driven browser automation agent. Describe a task in plain English and it
 drives a real Chromium locally through Playwright — navigating, clicking,
@@ -20,9 +20,9 @@ playwright install chromium
 ## Run it
 
 ```bash
-browser-agent "what is the top story on bbc.com/news right now?"
-browser-agent --headed                 # interactive, watch the browser work
-browser-agent --url https://en.wikipedia.org "how tall is the Eiffel Tower?"
+browse-buddy "what is the top story on bbc.com/news right now?"
+browse-buddy --headed                 # interactive, watch the browser work
+browse-buddy --url https://en.wikipedia.org "how tall is the Eiffel Tower?"
 ```
 
 In interactive mode the browser stays open between turns, so answering a
@@ -32,7 +32,7 @@ question it asked continues on the same page instead of starting over.
 
 ```bash
 pip install -e ".[web]"
-browser-agent-web
+browse-buddy-web
 ```
 
 Chat on the left, the live browser on the right. The browser runs on the
@@ -63,10 +63,10 @@ back to a model on your own machine.
 | `ollama` | — | runs locally, free, no key |
 
 ```bash
-browser-agent --provider gemini "how tall is the Eiffel Tower?"
+browse-buddy --provider gemini "how tall is the Eiffel Tower?"
 
 ollama pull qwen3:8b
-browser-agent --provider ollama "how tall is the Eiffel Tower?"
+browse-buddy --provider ollama "how tall is the Eiffel Tower?"
 ```
 
 `--provider auto` (the default) takes the first one you have a key for, Gemini
@@ -82,8 +82,8 @@ picks the wrong one.
 ## In a container
 
 ```bash
-docker build -t browser-agent .
-docker run -p 8080:8080 -e GEMINI_API_KEY=... browser-agent
+docker build -t browse-buddy .
+docker run -p 8080:8080 -e GEMINI_API_KEY=... browse-buddy
 ```
 
 `/health` answers 503 if the image has no working browser, so a bad build

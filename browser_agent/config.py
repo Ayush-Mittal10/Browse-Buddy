@@ -253,7 +253,7 @@ WRAP_UP_TIMEOUT_S = _env_int("BROWSER_AGENT_WRAP_UP_TIMEOUT_S", 180 if _LOCAL el
 # --- Storage -----------------------------------------------------------------
 
 STORE_DIR = Path(
-    _env_str("BROWSER_AGENT_STORE_DIR", str(Path.home() / ".browser-agent"))
+    _env_str("BROWSER_AGENT_STORE_DIR", str(Path.home() / ".browse-buddy"))
 ).expanduser()
 
 CONVERSATIONS_DIR = STORE_DIR / "conversations"

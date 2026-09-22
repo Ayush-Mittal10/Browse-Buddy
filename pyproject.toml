@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "browser-agent"
+name = "browse-buddy"
 dynamic = ["version"]
-description = "An LLM-driven browser automation agent that runs a real Chromium locally"
+description = "Give a browser a task in plain English and watch it get done"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -28,8 +28,8 @@ dependencies = [
 ]
 
 [project.scripts]
-browser-agent = "browser_agent.cli:main"
-browser-agent-web = "browser_agent.web:main"
+browse-buddy = "browser_agent.cli:main"
+browse-buddy-web = "browser_agent.web:main"
 
 [project.optional-dependencies]
 # The CLI stays at two dependencies; the web UI is opt-in.

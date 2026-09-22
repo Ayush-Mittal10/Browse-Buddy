@@ -1,7 +1,7 @@
 """The command line: one-shot for a single errand, interactive for a conversation.
 
-    browser-agent "find the cheapest flight Delhi to Mumbai on 5 Oct"
-    browser-agent --headed
+    browse-buddy "find the cheapest flight Delhi to Mumbai on 5 Oct"
+    browse-buddy --headed
 
 Printing is deliberately kept here rather than in the agent. The agent reports
 progress through two callbacks and knows nothing about a terminal, which is what
@@ -41,7 +41,7 @@ class Printer:
 
     def banner(self, model: str, headless: bool) -> None:
         where = "headless" if headless else "headed"
-        self.write(self._paint(f"Browser Agent {__version__}", "1"))
+        self.write(self._paint(f"Browse Buddy {__version__}", "1"))
         self.write(self._paint(f"{model} · {where}", "2"))
         self.write(self._paint('Type a task, or "quit" to exit.', "2"))
         self.write()
@@ -101,7 +101,7 @@ def describe_action(name: str, args: dict) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="browser-agent",
+        prog="browse-buddy",
         description="Give a browser a task in plain English and watch it get done.",
     )
     parser.add_argument(
@@ -132,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Show internal logging.")
     parser.add_argument("-q", "--quiet", action="store_true", help="Only show the final answer.")
-    parser.add_argument("--version", action="version", version=f"browser-agent {__version__}")
+    parser.add_argument("--version", action="version", version=f"browse-buddy {__version__}")
     return parser
 
 
