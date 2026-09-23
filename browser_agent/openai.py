@@ -15,7 +15,7 @@ import json
 import logging
 
 from browser_agent import config
-from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry
+from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry, unreachable
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class OpenAILLM:
                 headers={"Authorization": f"Bearer {self.api_key}"},
             )
         except Exception as e:
-            raise LLMError(f"Could not reach OpenAI: {type(e).__name__}: {e}") from e
+            raise LLMError(unreachable("OpenAI", e)) from e
 
         if response.status_code >= 400:
             raise LLMError(f"OpenAI returned {response.status_code}: {_detail(response)}")

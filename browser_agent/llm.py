@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+import httpx
+
 from browser_agent import config
 
 logger = logging.getLogger(__name__)
@@ -33,20 +35,53 @@ RETRYABLE = frozenset({429, 500, 502, 503, 504})
 
 
 async def post_with_retry(client, url, *, json, headers, attempts: int = 3, delay: float = 2.0):
-    """POST, retrying the statuses that mean "not now" rather than "no"."""
+    """POST, retrying the statuses that mean "not now" rather than "no".
+
+    A connection that times out or drops counts as "not now" too. It used to
+    escape this loop as an exception and end the whole task on the first
+    occurrence, which is the wrong end of the scale: a read timeout on a free
+    tier under load is the most ordinary transient failure there is, and the
+    task had already spent several steps by the time it happened.
+    """
     response = None
+    host = url.split("/")[2]
     for attempt in range(attempts):
-        response = await client.post(url, json=json, headers=headers)
-        if response.status_code not in RETRYABLE:
+        last = attempt == attempts - 1
+        try:
+            response = await client.post(url, json=json, headers=headers)
+        except httpx.TransportError as e:
+            # Out of attempts: let it go up as the error the caller reports.
+            if last:
+                raise
+            wait = delay * (2**attempt)
+            logger.info(
+                "%s from %s; retrying in %.0fs", type(e).__name__, host, wait
+            )
+            await asyncio.sleep(wait)
+            continue
+        if response.status_code not in RETRYABLE or last:
             return response
-        if attempt == attempts - 1:
-            break
         wait = _retry_after(response, delay * (2**attempt))
-        logger.info(
-            "HTTP %s from %s; retrying in %.0fs", response.status_code, url.split("/")[2], wait
-        )
+        logger.info("HTTP %s from %s; retrying in %.0fs", response.status_code, host, wait)
         await asyncio.sleep(wait)
     return response
+
+
+def unreachable(provider: str, e: BaseException) -> str:
+    """Why a request never got an answer, in words rather than a class name.
+
+    httpx raises a timeout with an empty message, so the obvious rendering comes
+    out as "ReadTimeout: " and tells the reader nothing about which half of the
+    request was slow or what they might do about it.
+    """
+    if isinstance(e, httpx.TimeoutException):
+        return (
+            f"{provider} did not answer within {config.HTTP_TIMEOUT_S}s, and did not answer "
+            "the retries either. It is usually load on the provider rather than anything "
+            "about the request; a smaller model normally answers when a larger one will not."
+        )
+    detail = str(e) or type(e).__name__
+    return f"Could not reach {provider}: {detail}"
 
 
 def _retry_after(response, fallback: float) -> float:

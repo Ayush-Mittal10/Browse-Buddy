@@ -17,7 +17,7 @@ import logging
 import uuid
 
 from browser_agent import config
-from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry
+from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry, unreachable
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class GeminiLLM:
                     self._http(), url, json=body, headers={"x-goog-api-key": self.api_key}
                 )
             except Exception as e:
-                raise LLMError(f"Could not reach Gemini: {type(e).__name__}: {e}") from e
+                raise LLMError(unreachable("Gemini", e)) from e
             if response.status_code != 429 or attempt == len(self.keys) - 1:
                 break
             self._key = (self._key + 1) % len(self.keys)

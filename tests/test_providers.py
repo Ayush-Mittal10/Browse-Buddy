@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
+from browser_agent import config
 from browser_agent.gemini import GeminiLLM, _declaration, _schema
 from browser_agent.llm import (
     LLMError,
@@ -323,13 +325,19 @@ class FakeResponse:
 
 
 class FakeClient:
+    """Answers with each given response in turn. An exception is raised instead,
+    which is how a connection that times out or drops arrives."""
+
     def __init__(self, *responses):
         self.responses = list(responses)
         self.calls = 0
 
     async def post(self, url, **kwargs):
         self.calls += 1
-        return self.responses.pop(0) if self.responses else FakeResponse(200)
+        answer = self.responses.pop(0) if self.responses else FakeResponse(200)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
 
 
 async def test_a_good_response_is_not_retried() -> None:
@@ -379,6 +387,60 @@ async def test_every_transient_status_is_retried(status: int) -> None:
 
     client = FakeClient(FakeResponse(status), FakeResponse(200))
     await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+    assert client.calls == 2
+
+
+async def test_a_read_timeout_is_retried_and_can_succeed() -> None:
+    # Seen on a real run: three steps in, Gemini took longer than the timeout
+    # once and the whole task ended on it. A slow answer from a free tier under
+    # load is the most ordinary transient failure there is, and it used to be
+    # the only kind that escaped this loop entirely.
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(httpx.ReadTimeout("timed out"), FakeResponse(200))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+
+    assert response.status_code == 200
+    assert client.calls == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("timed out"),
+        httpx.ConnectTimeout("too slow"),
+        httpx.ConnectError("refused"),
+        httpx.RemoteProtocolError("dropped"),
+    ],
+)
+async def test_every_transport_failure_is_retried(error: Exception) -> None:
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(error, FakeResponse(200))
+    await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+    assert client.calls == 2
+
+
+async def test_a_connection_that_never_works_is_raised_not_swallowed() -> None:
+    # The caller turns this into "Could not reach <provider>". Returning None
+    # instead would surface as an AttributeError somewhere less obvious.
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(*[httpx.ReadTimeout("timed out")] * 3)
+    with pytest.raises(httpx.ReadTimeout):
+        await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+
+    assert client.calls == 3
+
+
+async def test_a_bad_request_is_not_retried_even_after_a_timeout() -> None:
+    # The retry must not turn a definite "no" into three of them.
+    from browser_agent.llm import post_with_retry
+
+    client = FakeClient(httpx.ReadTimeout("timed out"), FakeResponse(400))
+    response = await post_with_retry(client, "https://x/y", json={}, headers={}, delay=0)
+
+    assert response.status_code == 400
     assert client.calls == 2
 
 
@@ -495,3 +557,24 @@ async def test_a_working_key_is_not_rotated_away_from() -> None:
 def test_a_caller_supplied_key_is_used_alone() -> None:
     # A visitor's own key must not fall through to the host's.
     assert GeminiLLM(api_key="theirs").keys == ["theirs"]
+
+
+async def test_a_timeout_is_explained_rather_than_named() -> None:
+    # httpx raises a timeout carrying an empty message, so the obvious rendering
+    # reaches the user as "Could not reach Gemini: ReadTimeout: " — a class name
+    # and a colon with nothing after it. This is what a real run showed.
+    from browser_agent.llm import unreachable
+
+    message = unreachable("Gemini", httpx.ReadTimeout(""))
+
+    assert "ReadTimeout" not in message
+    assert "did not answer" in message
+    assert str(config.HTTP_TIMEOUT_S) in message
+
+
+async def test_other_connection_failures_keep_their_own_words() -> None:
+    from browser_agent.llm import unreachable
+
+    assert "refused" in unreachable("OpenAI", httpx.ConnectError("refused"))
+    # An exception with nothing to say still names itself rather than trailing off.
+    assert "ConnectError" in unreachable("OpenAI", httpx.ConnectError(""))
