@@ -183,6 +183,7 @@ class BrowserSession:
         self.page = None
         self.pages: list = []
         self.notes: list[str] = []  # surfaced once, in the next snapshot
+        self._nav_failures: dict[str, int] = {}  # host -> times it would not load
         self.last_screenshot: tuple[str, str] | None = None  # (base64, mime)
         self._pw = None
         self._browser = None
@@ -438,10 +439,20 @@ class BrowserSession:
             resp = await page.goto(url, wait_until="domcontentloaded")
         except Exception as e:
             logger.warning("navigate failed: %s", _short_error(e))
-            return await self._after(
-                f"Could not open {url}: {_short_error(e)}. "
-                "Try again once, then try a different page or a search engine."
+            host = (urlsplit(url).hostname or url).lower()
+            failures = self._nav_failures[host] = self._nav_failures.get(host, 0) + 1
+            advice = (
+                # A site that has refused twice is not having a bad moment. Left
+                # to "try again once" the model will keep coming back to it, or
+                # wander off substituting other sites without saying so.
+                f"{host} has now failed {failures} times and is not going to load in this "
+                "session — the site is refusing us, not loading slowly. Do not try it again. "
+                "If the task named this site specifically, tell the user it is unreachable "
+                "and offer an alternative rather than quietly using a different one."
+                if failures >= 2
+                else "Try again once, then try a different page or a search engine."
             )
+            return await self._after(f"Could not open {url}: {_short_error(e)}. {advice}")
         status = f" (HTTP {resp.status})" if resp is not None and resp.status >= 400 else ""
         return await self._after(f"Opened {page.url}{status}.")
 

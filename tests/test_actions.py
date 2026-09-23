@@ -378,3 +378,48 @@ async def test_switching_to_a_tab_that_is_not_open(session, serve, index: int) -
 async def test_switch_tab_rejects_a_non_numeric_index(session, serve) -> None:
     await session.navigate(await serve(FORM))
     assert "Give the tab number" in await session.switch_tab("the second one")
+
+
+# --- a site that will not load ------------------------------------------------
+
+
+async def test_the_first_failure_suggests_trying_again(session) -> None:
+    out = await session.navigate("https://this-host-does-not-resolve.invalid/")
+    assert "Could not open" in out
+    assert "Try again once" in out
+
+
+async def test_the_second_failure_says_to_stop(session) -> None:
+    host = "https://this-host-does-not-resolve.invalid/"
+    await session.navigate(host)
+    out = await session.navigate(host)
+
+    # A site that has refused twice is not having a bad moment, and telling the
+    # model to "try again once" is how it ends up back there a third time.
+    assert "failed 2 times" in out
+    assert "Do not try it again" in out
+
+
+async def test_failures_are_counted_per_host_not_per_url(session) -> None:
+    await session.navigate("https://this-host-does-not-resolve.invalid/one")
+    out = await session.navigate("https://this-host-does-not-resolve.invalid/two")
+    # A different path on the same dead host is the same dead host.
+    assert "failed 2 times" in out
+
+
+async def test_a_dead_host_does_not_taint_a_working_one(session, serve) -> None:
+    await session.navigate("https://this-host-does-not-resolve.invalid/")
+    await session.navigate("https://this-host-does-not-resolve.invalid/")
+    out = await session.navigate(await serve(FORM))
+    assert "Opened" in out
+    assert "failed" not in out
+
+
+async def test_a_named_site_failing_is_not_someone_elses_job(session) -> None:
+    host = "https://this-host-does-not-resolve.invalid/"
+    await session.navigate(host)
+    out = await session.navigate(host)
+    # The worst outcome is doing the task on a different site and presenting it
+    # as though it came from the one that was asked for.
+    assert "tell the user it is unreachable" in out
+    assert "rather than quietly using a different one" in out

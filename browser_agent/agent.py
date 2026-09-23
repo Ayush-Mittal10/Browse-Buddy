@@ -228,8 +228,16 @@ class BrowserAgent:
                 if self.on_action:
                     self.on_action(call.name, call.input)
                 status = await execute_tool(call.name, call.input, session)
-                recent.append(f"{call.name}:{json.dumps(call.input, sort_keys=True, default=str)}")
-                if len(recent) >= _REPEAT_LIMIT and len(set(recent[-_REPEAT_LIMIT:])) == 1:
+                signature = f"{call.name}:{json.dumps(call.input, sort_keys=True, default=str)}"
+                recent.append(signature)
+                in_a_row = (
+                    len(recent) >= _REPEAT_LIMIT and len(set(recent[-_REPEAT_LIMIT:])) == 1
+                )
+                # Counting the whole run as well as the tail: three goes at the
+                # same dead URL, spread out between other attempts, never
+                # tripped a check that only looked at the last few.
+                total = recent.count(signature)
+                if in_a_row or total == _REPEAT_LIMIT:
                     logger.warning("Repeating %s; nudging", call.name)
                     status += "\n\n" + _STUCK_NOTE.format(n=_REPEAT_LIMIT)
                 shot = session.take_screenshot() if call.name == "screenshot" else None

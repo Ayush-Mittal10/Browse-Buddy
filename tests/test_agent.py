@@ -534,3 +534,24 @@ async def test_a_browser_that_went_away_is_admitted_to(session, serve) -> None:
         assert "browser is where you left it" not in text
     finally:
         await agent.close()
+
+
+async def test_the_same_dead_url_is_noticed_even_when_spread_out(session, serve) -> None:
+    url = await serve(PAGE)
+    dead = "https://this-host-does-not-resolve.invalid/"
+    agent = agent_with(
+        session,
+        Reply("", [call("navigate", {"url": dead}, "a")]),
+        Reply("", [call("navigate", {"url": url}, "b")]),
+        Reply("", [call("navigate", {"url": dead}, "c")]),
+        Reply("", [call("get_page", {}, "d")]),
+        Reply("", [call("navigate", {"url": dead}, "e")]),
+        Reply("giving up"),
+    )
+
+    await agent.run("open the dead site")
+
+    texts = [r.text for m in agent.messages if m["role"] == "tool" for r in m["results"]]
+    # Three attempts at the same URL, never three in a row — the old check only
+    # looked at the last few actions and so never saw it.
+    assert "exact action 3 times" in texts[-1]
