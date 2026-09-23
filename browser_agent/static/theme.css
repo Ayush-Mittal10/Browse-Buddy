@@ -154,6 +154,17 @@ select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-
 #send.busy { background: var(--sunken); color: var(--accent); cursor: progress; }
 #send.busy::after { content: "…"; }
 
+#stop {
+  min-width: 78px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--bad);
+  background: var(--bg);
+  border: 1px solid var(--bad);
+}
+#stop:hover:not(:disabled) { background: var(--bad-bg); }
+#stop:disabled { cursor: progress; opacity: .6; }
+
 /* ── layout ───────────────────────────────────────────────────────────── */
 
 main { flex: 1; display: flex; min-height: 0; }

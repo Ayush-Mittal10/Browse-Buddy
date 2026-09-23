@@ -22,6 +22,7 @@ nothing: the model is asked for a progress line and the browser stays open.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FINISHED",
     "IN_PROGRESS",
+    "STOPPED",
     "WAITING",
     "BrowserAgent",
     "BrowserOutcome",
@@ -59,6 +61,10 @@ __all__ = [
 FINISHED = "finished"        # finish_task was called: `text` is the report
 WAITING = "waiting"          # the model replied in text (a question, a check-in)
 IN_PROGRESS = "in_progress"  # the run's budget ran out mid-task
+# Interrupted by the person, which continues exactly like IN_PROGRESS but is
+# not the same event and must not be reported as one: being told "out of
+# budget" when you pressed stop is simply untrue.
+STOPPED = "stopped"
 
 
 class BrowserOutcome(NamedTuple):
@@ -71,6 +77,7 @@ class BrowserOutcome(NamedTuple):
 _NO_REPORT = object()  # the model stopped with empty text
 _FINISHED = object()   # finish_task was called
 _OUT_OF_TIME = object()
+_STOPPED = object()    # the user asked it to stop
 
 # How many identical actions in a row before the loop says something. Seen live
 # on a local model: eight consecutive scrolls down a Wikipedia article, each one
@@ -179,10 +186,22 @@ class BrowserAgent:
         self.turns = 0
 
         self._session: BrowserSession | None = None
+        # Set by stop(). Cleared at the start of every run, so a stop cannot
+        # carry over and kill the turn after the one it was meant for.
+        self._stop = asyncio.Event()
 
     @property
     def model(self) -> str:
         return self.llm.name
+
+    def stop(self) -> None:
+        """Interrupt the run in progress. The browser is left exactly as it is.
+
+        Deliberately the same shape as running out of budget: the page stays
+        where it got to, the conversation keeps everything, and the next
+        message carries on from there. Stopping is a pause, not a cancellation.
+        """
+        self._stop.set()
 
     async def __aenter__(self) -> BrowserAgent:
         return self
@@ -254,6 +273,31 @@ class BrowserAgent:
                 return _FINISHED
         return None
 
+    async def _until_stopped_or_done(self, session: BrowserSession):
+        """The loop, racing a stop and the clock.
+
+        asyncio.wait rather than wait_for, because the loop spends most of its
+        time inside a model call and a stop has to land during one of those —
+        waiting for the current step to finish would make the button useless on
+        exactly the slow runs people want to stop.
+        """
+        work = asyncio.create_task(self._run_loop(session))
+        stopped = asyncio.create_task(self._stop.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {work, stopped}, timeout=self.timeout_s, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            stopped.cancel()
+
+        if work in done:
+            return work.result()
+
+        work.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await work
+        return _STOPPED if self._stop.is_set() else _OUT_OF_TIME
+
     async def _wrap_up(self, reason: str) -> str:
         """The run is over with nothing said to the user: ask for one line.
 
@@ -319,6 +363,7 @@ class BrowserAgent:
 
         session = self._session
         session.finished_report = None
+        self._stop.clear()
         self.turns += 1
 
         with use_session(session):
@@ -346,7 +391,7 @@ class BrowserAgent:
             self.messages.append(llm.user(human))
 
             try:
-                result = await asyncio.wait_for(self._run_loop(session), timeout=self.timeout_s)
+                result = await self._until_stopped_or_done(session)
             except TimeoutError:
                 result = _OUT_OF_TIME
             except LLMError as e:
@@ -360,6 +405,18 @@ class BrowserAgent:
                 # conversation, and the next message is usually about the same
                 # thing.
                 return BrowserOutcome(session.finished_report or "Done.", FINISHED, url)
+
+            if result is _STOPPED:
+                # No wrap-up call: someone who pressed stop is not waiting to
+                # be told about it by a model that takes another few seconds.
+                # The dangling calls still have to be answered, or the next
+                # request is rejected for a history the model never finished.
+                _close_dangling_tool_calls(self.messages, "Cancelled — you asked me to stop.")
+                return BrowserOutcome(
+                    'Stopped. The browser is where I left it — say "continue" to carry on.',
+                    STOPPED,
+                    url,
+                )
 
             if isinstance(result, str):
                 return BrowserOutcome(result, WAITING, url)

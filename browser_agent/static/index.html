@@ -54,6 +54,7 @@
     <div id="composer">
       <div id="inputWrap"><textarea id="input" placeholder="Give it a task…" rows="1"></textarea></div>
       <button id="send" disabled>Run</button>
+      <button id="stop" type="button" hidden>Stop</button>
     </div>
   </section>
 
@@ -75,6 +76,7 @@ const screen = document.getElementById('screen');
 const placeholder = document.getElementById('placeholder');
 const input = document.getElementById('input');
 const send = document.getElementById('send');
+const stop = document.getElementById('stop');
 const dot = document.getElementById('dot');
 const stateLabel = document.getElementById('stateLabel');
 const modelLabel = document.getElementById('modelLabel');
@@ -220,6 +222,10 @@ function refreshButton() {
   const typed = input.value.trim().length > 0;
 
   for (const pill of suggestions.children) pill.disabled = busy;
+  // While a task runs the Run button is not what anyone wants to press, so
+  // Stop takes its place rather than sitting next to it greyed out.
+  send.hidden = busy;
+  stop.hidden = !busy;
   send.classList.toggle('busy', busy);
   send.disabled = busy || !connected || !typed;
   send.textContent = busy ? 'Running' : 'Run';
@@ -230,6 +236,10 @@ function refreshButton() {
 }
 
 function setState(next) {
+  if (next !== 'running' && next !== 'queued') {
+    stop.disabled = false;
+    stop.textContent = 'Stop';
+  }
   state = next;
   dot.className = 'dot ' + next;
   stateLabel.textContent = next;
@@ -382,6 +392,9 @@ function connect() {
         // When the model answers in text instead of calling finish_task, the
         // narration and the report are the same words. Show them once.
         if (message.text && message.text !== lastAgentText) line('agent', message.text);
+        // Nothing for 'stopped': it was asked for, and the report already
+        // says how to carry on. Telling someone who pressed stop that they
+        // are out of budget is both wrong and a repeat.
         if (message.state === 'in_progress') line('note', 'Out of budget — say "continue" to carry on.');
         if (message.state === 'finished') line('note', 'Ask a follow-up, or something else entirely.');
         break;
@@ -405,6 +418,12 @@ function submit() {
 }
 
 send.addEventListener('click', submit);
+stop.addEventListener('click', () => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: 'stop' }));
+  stop.disabled = true;
+  stop.textContent = 'Stopping';
+});
 input.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); submit(); }
 });

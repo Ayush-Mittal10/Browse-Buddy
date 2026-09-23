@@ -337,3 +337,16 @@ def test_an_interrupted_run_exits_with_the_usual_code(monkeypatch) -> None:
 
 async def _immediately(value):
     return value
+
+
+def test_a_stopped_run_is_not_reported_as_running_out_of_budget() -> None:
+    from browser_agent.agent import STOPPED
+
+    out, buf = printer()
+    out.report('Stopped. Say "continue" to carry on.', STOPPED)
+
+    text = buf.getvalue()
+    assert "Stopped." in text
+    # Telling someone who pressed stop that they are out of budget is untrue,
+    # and the report already says how to carry on.
+    assert "Out of budget" not in text

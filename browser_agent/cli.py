@@ -57,6 +57,8 @@ class Printer:
     def report(self, text: str, state: str) -> None:
         self.write()
         self.write(text)
+        # Nothing for STOPPED: it was asked for, and the report already says
+        # what to do next.
         if state == IN_PROGRESS:
             self.write()
             self.write(self._paint('(Out of budget — say "continue" to carry on.)', "2"))

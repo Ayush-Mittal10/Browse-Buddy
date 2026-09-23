@@ -231,12 +231,61 @@ def build_app():
         await websocket.accept()
         outbox = Outbox()
         pump = asyncio.create_task(_pump(websocket, outbox))
-        agent = None
-        held = False
-        tasks_run = 0
+        state = {"agent": None, "held": False, "tasks": 0}
+        running: asyncio.Task | None = None
 
         def say(**message) -> None:
             outbox.send(message)
+
+        async def start_agent(request: dict) -> bool:
+            """Make the agent for this visitor, if there is not one yet."""
+            if state["agent"] is not None:
+                return True
+            if not state["held"]:
+                if browsers.locked():
+                    say(type="status", state="queued")
+                await browsers.acquire()
+                state["held"] = True
+            try:
+                state["agent"] = _make_agent(
+                    request, say, local=getattr(app.state, "ollama", False)
+                )
+            except ValueError as e:
+                say(type="error", text=str(e))
+                browsers.release()
+                state["held"] = False
+                return False
+            say(type="ready", provider=state["agent"].llm.provider, model=state["agent"].model)
+            return True
+
+        async def do_task(request: dict, message: str) -> None:
+            """One task, start to finish, reporting as it goes."""
+            if not await start_agent(request):
+                say(type="status", state="idle")
+                return
+            state["tasks"] += 1
+            say(type="status", state="running")
+            try:
+                outcome = await state["agent"].run(message)
+            except BrowserUnavailable as e:
+                say(type="error", text=str(e))
+                return
+            except Exception as e:
+                logger.exception("Task failed")
+                say(type="error", text=f"{type(e).__name__}: {e}")
+                say(type="status", state="idle")
+                return
+
+            say(type="report", text=outcome.text, state=outcome.state, url=outcome.url)
+            # A server has no speakers, so anything meant to be watched is
+            # handed to the viewer's own browser to play instead.
+            found = media.detect(outcome.url)
+            if found:
+                say(type="media", provider=found.provider, url=found.url, embed=found.embed)
+            say(type="status", state="idle")
+            # The agent is deliberately kept, finished or not. It holds the
+            # conversation, so discarding it here is what made a follow-up
+            # arrive with no memory of what was just asked or answered.
 
         try:
             while True:
@@ -245,15 +294,31 @@ def build_app():
                         websocket.receive_json(), timeout=config.WEB_IDLE_TIMEOUT_S
                     )
                 except TimeoutError:
+                    if running and not running.done():
+                        # A long task is not a quiet connection.
+                        continue
                     say(type="error", text="Closed after a few minutes of quiet.")
                     await asyncio.sleep(0.2)
                     break
+
+                # Stop is handled here rather than inside the task, which is the
+                # whole reason a task runs in the background: while the handler
+                # was awaiting a run it never read the socket, so a stop sat in
+                # the buffer until the thing it was meant to stop had finished.
+                if request.get("type") == "stop":
+                    if running and not running.done() and state["agent"] is not None:
+                        state["agent"].stop()
+                    continue
 
                 message = (request.get("message") or "").strip()
                 if not message:
                     continue
 
-                if tasks_run >= config.WEB_MAX_TASKS:
+                if running and not running.done():
+                    say(type="error", text="One task at a time — stop this one first.")
+                    continue
+
+                if state["tasks"] >= config.WEB_MAX_TASKS:
                     say(
                         type="error",
                         text=f"This demo allows {config.WEB_MAX_TASKS} tasks per session. "
@@ -261,63 +326,23 @@ def build_app():
                     )
                     continue
 
-                if agent is None:
-                    if not held:
-                        if browsers.locked():
-                            say(type="status", state="queued")
-                        await browsers.acquire()
-                        held = True
-                    try:
-                        agent = _make_agent(
-                            request, say, local=getattr(app.state, "ollama", False)
-                        )
-                    except ValueError as e:
-                        say(type="error", text=str(e))
-                        browsers.release()
-                        held = False
-                        continue
-                    say(type="ready", provider=agent.llm.provider, model=agent.model)
-
-                tasks_run += 1
-                say(type="status", state="running")
-                try:
-                    outcome = await agent.run(message)
-                except BrowserUnavailable as e:
-                    say(type="error", text=str(e))
-                    break
-                except Exception as e:
-                    logger.exception("Task failed")
-                    say(type="error", text=f"{type(e).__name__}: {e}")
-                    continue
-
-                say(type="report", text=outcome.text, state=outcome.state, url=outcome.url)
-                # A server has no speakers, so anything meant to be watched is
-                # handed to the viewer's own browser to play instead.
-                found = media.detect(outcome.url)
-                if found:
-                    say(
-                        type="media",
-                        provider=found.provider,
-                        url=found.url,
-                        embed=found.embed,
-                    )
-                say(type="status", state="idle")
-                # The agent is deliberately kept, finished or not. It holds the
-                # conversation, so discarding it here is what made a follow-up
-                # arrive with no memory of what was just asked or answered — the
-                # visitor is still in the same chat and expects it to know.
+                running = asyncio.create_task(do_task(request, message))
 
         except WebSocketDisconnect:
             pass
         except Exception:
             logger.exception("Socket failed")
         finally:
+            if running and not running.done():
+                running.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await running
             pump.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pump
-            if agent is not None:
-                await agent.close()
-            if held:
+            if state["agent"] is not None:
+                await state["agent"].close()
+            if state["held"]:
                 browsers.release()
             with contextlib.suppress(Exception):
                 await websocket.close()

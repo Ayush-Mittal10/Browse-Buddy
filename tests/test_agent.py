@@ -15,12 +15,14 @@ import pytest
 from browser_agent.agent import (
     FINISHED,
     IN_PROGRESS,
+    STOPPED,
     WAITING,
     BrowserAgent,
     _close_dangling_tool_calls,
     _prune_screenshots,
 )
 from browser_agent.llm import LLMError, Reply, ToolCall, ToolResult, tool_results
+from browser_agent.llm import user as llm_user
 
 PAGE = """
 <!doctype html>
@@ -555,3 +557,121 @@ async def test_the_same_dead_url_is_noticed_even_when_spread_out(session, serve)
     # Three attempts at the same URL, never three in a row — the old check only
     # looked at the last few actions and so never saw it.
     assert "exact action 3 times" in texts[-1]
+
+
+# --- stopping -----------------------------------------------------------------
+
+
+class SlowLLM(FakeLLM):
+    """Takes its time, so a stop has something to land in the middle of."""
+
+    def __init__(self, *replies, **kwargs):
+        super().__init__(*replies, **kwargs)
+        self.started = asyncio.Event()
+
+    async def complete(self, *, system, tools, messages):
+        self.started.set()
+        await asyncio.sleep(30)
+        return await super().complete(system=system, tools=tools, messages=messages)
+
+
+async def test_stopping_pauses_rather_than_cancels(session, serve) -> None:
+    await serve(PAGE)
+    backend = SlowLLM(Reply("never reached"))
+    agent = agent_with(session, backend=backend)
+
+    async def press_stop():
+        await backend.started.wait()
+        agent.stop()
+
+    asyncio.create_task(press_stop())
+    outcome = await agent.run("do something long")
+
+    # Its own state, not IN_PROGRESS: being told "out of budget" when you
+    # pressed stop is simply untrue.
+    assert outcome.state == STOPPED
+    assert "Stopped" in outcome.text
+    assert "continue" in outcome.text
+    # The page is exactly where it was, which is the point of a pause.
+    assert agent._session is session
+
+
+async def test_stopping_lands_during_a_model_call_not_after_it(session, serve) -> None:
+    await serve(PAGE)
+    backend = SlowLLM(Reply("never reached"))
+    agent = agent_with(session, backend=backend)
+
+    async def press_stop():
+        await backend.started.wait()
+        agent.stop()
+
+    asyncio.create_task(press_stop())
+    started = asyncio.get_running_loop().time()
+    await agent.run("do something long")
+    took = asyncio.get_running_loop().time() - started
+
+    # The backend sleeps 30s. Waiting for the step to finish would make the
+    # button useless on exactly the slow runs people want to stop.
+    assert took < 5, f"stop took {took:.1f}s to land"
+
+
+async def test_a_stopped_run_leaves_a_history_the_model_will_accept(session, serve) -> None:
+    url = await serve(PAGE)
+    backend = SlowLLM(Reply("never reached"))
+    agent = BrowserAgent(backend=backend)
+    agent._session = session
+
+    # One completed step, so there is a tool call on the record, then a stop
+    # during the next model call.
+    agent.messages.append(llm_user("earlier"))
+
+    async def press_stop():
+        await backend.started.wait()
+        agent.stop()
+
+    asyncio.create_task(press_stop())
+    await agent.run("go", start_url=url)
+
+    for message in agent.messages:
+        if message["role"] == "assistant":
+            answered = {
+                r.id
+                for m in agent.messages
+                if m["role"] == "tool"
+                for r in m["results"]
+            }
+            for c in message.get("tool_calls") or []:
+                assert c.id in answered, "a call with no result is rejected on the next request"
+
+
+async def test_continuing_after_a_stop_keeps_the_conversation(session, serve) -> None:
+    await serve(PAGE)
+    backend = SlowLLM(Reply("never reached"))
+    agent = agent_with(session, backend=backend)
+
+    async def press_stop():
+        await backend.started.wait()
+        agent.stop()
+
+    asyncio.create_task(press_stop())
+    await agent.run("find the cart")
+
+    # A fresh backend for the second turn, answering immediately.
+    agent.llm = FakeLLM(Reply("Carrying on."))
+    outcome = await agent.run("continue")
+
+    assert outcome.state == WAITING
+    assert any("find the cart" in (m.get("text") or "") for m in agent.llm.sent[-1])
+
+
+async def test_a_stop_does_not_carry_into_the_next_turn(session, serve) -> None:
+    await serve(PAGE)
+    agent = agent_with(session, Reply("first"), Reply("second"))
+
+    agent.stop()          # pressed while nothing was running
+    outcome = await agent.run("go")
+
+    # Cleared at the start of a run, or the stop would kill the turn after the
+    # one it was meant for.
+    assert outcome.state == WAITING
+    assert outcome.text == "first"

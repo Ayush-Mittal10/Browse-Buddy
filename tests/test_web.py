@@ -623,3 +623,92 @@ def test_the_page_copes_with_a_blocked_popup(web) -> None:
     assert "window.open(url, '_blank', 'noopener')" not in page.replace(
         "// Deliberately NOT window.open(url, '_blank', 'noopener')", ""
     )
+
+
+# --- stopping -----------------------------------------------------------------
+
+
+def test_a_stop_reaches_the_agent_while_it_is_running(web, monkeypatch) -> None:
+    import asyncio as _asyncio
+
+    stopped = []
+
+    class Slow(FakeAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.running = _asyncio.Event()
+
+        async def run(self, message, **kwargs):
+            self.running.set()
+            await _asyncio.sleep(30)
+            return BrowserOutcome("never reached", FINISHED, "")
+
+        def stop(self):
+            stopped.append(True)
+
+    monkeypatch.setattr("browser_agent.web.BrowserAgent", Slow)
+
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "something long"})
+        drain(socket, until="status")          # ready + running
+        socket.send_json({"type": "stop"})
+        # The handler has to still be reading the socket while the task runs;
+        # if it were blocked on the run, this would sit in the buffer until the
+        # thing it was meant to stop had already finished.
+        for _ in range(40):
+            if stopped:
+                break
+            socket.send_json({"type": "ping"})
+
+    assert stopped, "the stop never reached the agent"
+
+
+def test_a_second_task_is_refused_while_one_is_running(web, monkeypatch) -> None:
+    import asyncio as _asyncio
+
+    class Slow(FakeAgent):
+        async def run(self, message, **kwargs):
+            await _asyncio.sleep(30)
+            return BrowserOutcome("done", FINISHED, "")
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr("browser_agent.web.BrowserAgent", Slow)
+
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "first"})
+        drain(socket, until="status")
+        socket.send_json({"message": "second"})
+        error = drain(socket, until="error")[-1]
+
+    assert "One task at a time" in error["text"]
+
+
+def test_a_stop_with_nothing_running_is_harmless(web) -> None:
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"type": "stop"})
+        socket.send_json({"message": "now do something"})
+        report = drain(socket, until="report")[-1]
+
+    assert report["text"] == "All done."
+
+
+def test_the_page_offers_a_stop_button(web) -> None:
+    page = web.get("/").text
+
+    assert 'id="stop"' in page
+    assert "type: 'stop'" in page
+    # It replaces Run rather than sitting beside it greyed out, because while a
+    # task runs Run is not what anyone wants to press.
+    assert "send.hidden = busy;" in page
+    assert "stop.hidden = !busy;" in page
+
+
+def test_a_stop_is_not_dressed_up_as_running_out_of_budget(web) -> None:
+    page = web.get("/").text
+
+    # The note belongs to in_progress only. A stop carries its own state and
+    # its own wording, so nothing branches on it here.
+    assert "if (message.state === 'in_progress') line('note', 'Out of budget" in page
+    assert "message.state === 'stopped'" not in page
