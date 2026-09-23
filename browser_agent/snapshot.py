@@ -53,8 +53,16 @@ SNAPSHOT_JS = r"""
     if (by) return clean(by.split(/\s+/).map(id => document.getElementById(id)).filter(Boolean).map(e => e.innerText).join(' '));
     return '';
   };
+  // A label longer than this is not a label. Sites put whole paragraphs — and
+  // occasionally a framework's error message — into aria-label on a two-word
+  // button, and taking it verbatim then truncating leaves several buttons
+  // looking identical and meaningless. Seen live: IRCTC's language dialog,
+  // where both choices came through as the same 80 characters of Angular
+  // warning and the model could not tell which one said English.
+  const LABEL_LIMIT = 120;
   const nameOf = el => {
-    const aria = clean(el.getAttribute('aria-label')); if (aria) return aria;
+    const aria = clean(el.getAttribute('aria-label'));
+    if (aria && aria.length <= LABEL_LIMIT) return aria;
     const lab = labelOf(el); if (lab) return lab;
     const ph = clean(el.getAttribute('placeholder')); if (ph) return ph;
     // A <select>'s innerText is every option run together, which says nothing
@@ -66,8 +74,11 @@ SNAPSHOT_JS = r"""
     if (own) return own;
     // Icon-only controls: an <img alt>, an <svg><title>, or a labelled child.
     const child = el.querySelector('img[alt], svg title, [aria-label]');
-    if (!child) return '';
-    return clean(child.getAttribute('alt') || child.getAttribute('aria-label') || child.textContent || '');
+    if (child) {
+      const inner = clean(child.getAttribute('alt') || child.getAttribute('aria-label') || child.textContent || '');
+      if (inner) return inner;
+    }
+    return aria || '';
   };
   const FORM_TAGS = ['input', 'select', 'textarea', 'button', 'a', 'summary'];
   const all = Array.from(document.querySelectorAll(INTERACTIVE)).filter(visible);
@@ -105,8 +116,20 @@ SNAPSHOT_JS = r"""
     if (tag === 'a') {
       try { const u = new URL(el.href, location.href); href = (u.host === location.host ? u.pathname : u.host + u.pathname).slice(0, 60); } catch (e) {}
     }
+    // Is anything on top of it? An overlay does not hide what is underneath —
+    // the elements below are still visible, still in the viewport, and still
+    // reported as usable, which is how an agent ends up typing into a form
+    // behind a modal and wondering why nothing happens.
+    const cx = Math.min(Math.max(r.left + r.width / 2, 0), vw - 1);
+    const cy = Math.min(Math.max(r.top + r.height / 2, 0), vh - 1);
+    const onScreen = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+    let covered = false;
+    if (onScreen) {
+      const top = document.elementFromPoint(cx, cy);
+      covered = !!top && top !== el && !el.contains(top) && !top.contains(el);
+    }
     items.push({
-      ref, tag, role, type,
+      ref, tag, role, type, covered,
       name: nm.slice(0, 80),
       value, state, href,
       options: tag === 'select' ? Array.from(el.options).slice(0, 12).map(o => clean(o.text)).filter(Boolean) : [],
@@ -174,6 +197,16 @@ _SENSITIVE_UPPER = re.compile(r"\bPAN\b")  # case-sensitive: the tax id, not the
 _SENSITIVE_AUTOCOMPLETE = ("cc-", "one-time-code", "current-password", "new-password")
 
 
+# An attribute longer than this is prose, not a label, and matching words in
+# prose is how a button ends up marked as a credential field. IRCTC's language
+# dialog put a paragraph mentioning Aadhaar into the aria-label of both
+# buttons, and both came back flagged.
+_LABEL_LIMIT = 200
+
+# Only something you can type into can hold a secret.
+_FIELD_TAGS = ("input", "textarea")
+
+
 def is_sensitive_field(info: dict) -> bool:
     """Whether a form field holds a credential, a payment detail or an ID.
 
@@ -183,14 +216,22 @@ def is_sensitive_field(info: dict) -> bool:
     everywhere it would otherwise be echoed — tool results, logs, and the
     snapshot's value column.
     """
+    tag = (info.get("tag") or "").lower()
+    if tag and tag not in _FIELD_TAGS and not info.get("fillable"):
+        # A button or a link has no value to protect, whatever its label says.
+        return False
     if (info.get("type") or "").lower() == "password":
         return True
     autocomplete = (info.get("autocomplete") or "").lower()
     if any(marker in autocomplete for marker in _SENSITIVE_AUTOCOMPLETE):
         return True
     haystack = " ".join(
-        str(info.get(k) or "")
-        for k in ("fieldName", "id", "placeholder", "ariaLabel", "label", "name")
+        value
+        for value in (
+            str(info.get(k) or "")
+            for k in ("fieldName", "id", "placeholder", "ariaLabel", "label", "name")
+        )
+        if len(value) <= _LABEL_LIMIT
     )
     return bool(_SENSITIVE_WORDS.search(haystack) or _SENSITIVE_UPPER.search(haystack))
 
@@ -217,17 +258,29 @@ def _element_line(el: dict) -> str:
         line += "  options: " + " | ".join(el["options"])
     if el.get("state"):
         line += "  [" + ", ".join(el["state"]) + "]"
+    if el.get("covered"):
+        line += "  [behind an overlay — not clickable]"
     if is_sensitive_field(el):
         line += "  [sensitive field]"
     return line
 
 
 def _pick_elements(elements: list[dict], cap: int) -> list[dict]:
-    """All of them when they fit; otherwise everything in the viewport first,
-    topped up in document order, and presented in document order."""
+    """All of them when they fit; otherwise the ones that can actually be used
+    first, topped up in document order, and presented in document order.
+
+    Reachable beats merely on-screen. When a dialog is open, everything behind
+    it is still on-screen, and filling the budget with elements that cannot be
+    clicked is how the few that can get pushed off the end of the list.
+    """
     if len(elements) <= cap:
         return elements
-    chosen = [el for el in elements if el.get("inView")][:cap]
+    reachable = [el for el in elements if el.get("inView") and not el.get("covered")]
+    chosen = reachable[:cap]
+    if len(chosen) < cap:
+        chosen += [el for el in elements if el.get("inView") and el.get("covered")][
+            : cap - len(chosen)
+        ]
     seen = {el["ref"] for el in chosen}
     for el in elements:
         if len(chosen) >= cap:
@@ -236,6 +289,34 @@ def _pick_elements(elements: list[dict], cap: int) -> list[dict]:
             chosen.append(el)
             seen.add(el["ref"])
     return sorted(chosen, key=lambda el: el["ref"])
+
+
+def _overlay_note(elements: list[dict]) -> str:
+    """Said out loud when something is sitting on top of the page.
+
+    Marking the individual elements is not enough on its own: a model reading
+    a long list will act on the first plausible field and never notice that
+    every one of them says the same thing. Seen live on IRCTC, where a
+    language dialog left the booking form perfectly visible underneath and the
+    agent filled it in, clicked Search, and waited.
+    """
+    on_screen = [el for el in elements if el.get("inView")]
+    if len(on_screen) < 4:
+        return ""
+    covered = [el for el in on_screen if el.get("covered")]
+    if len(covered) < len(on_screen) * 0.6:
+        return ""
+    usable = len(on_screen) - len(covered)
+    return (
+        f"Something is on top of the page — a dialog, a cookie banner or an overlay. "
+        f"{len(covered)} of the {len(on_screen)} elements on screen are behind it and "
+        f"will not respond to a click. Deal with what is on top first"
+        + (
+            f"; the {usable} that are not marked as covered are the ones you can use."
+            if usable
+            else " — scroll, or press Escape, to find the way to dismiss it."
+        )
+    )
 
 
 def _scroll_line(data: dict) -> str:
@@ -273,6 +354,9 @@ def format_snapshot(
     lines.append(_scroll_line(data))
 
     elements = data.get("elements") or []
+    overlay = _overlay_note(elements)
+    if overlay:
+        lines.append(f"Note: {overlay}")
     shown = _pick_elements(elements, max_elements)
     lines.append("")
     if not elements:

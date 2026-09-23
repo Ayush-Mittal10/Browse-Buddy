@@ -222,3 +222,81 @@ def test_tabs_only_shown_when_there_is_more_than_one() -> None:
 def test_notes_are_surfaced() -> None:
     out = format_snapshot(page(), notes=["A dialog was dismissed."])
     assert "Note: A dialog was dismissed." in out
+
+
+# --- overlays -----------------------------------------------------------------
+
+
+def test_a_covered_element_says_so() -> None:
+    el = element(1, name="Search Trains", covered=True)
+    assert "[behind an overlay — not clickable]" in format_snapshot(page(elements=[el]))
+
+
+def test_an_uncovered_element_does_not() -> None:
+    assert "behind an overlay" not in format_snapshot(page(elements=[element(1)]))
+
+
+def test_an_overlay_over_most_of_the_screen_is_called_out() -> None:
+    # Seen live on IRCTC: a language dialog left the booking form perfectly
+    # visible underneath, so the agent filled it in, clicked Search and waited.
+    elements = [element(i, covered=True) for i in range(1, 10)]
+    elements += [element(i, name="English") for i in range(10, 13)]
+
+    out = format_snapshot(page(elements=elements))
+
+    assert "Something is on top of the page" in out
+    assert "9 of the 12" in out
+    assert "the 3 that are not marked as covered" in out
+
+
+def test_a_sticky_header_over_a_few_elements_is_not_an_overlay() -> None:
+    # Partial covering is ordinary. Saying "a dialog is open" every time a
+    # header overlaps something would teach the model to ignore the warning.
+    elements = [element(i) for i in range(1, 10)]
+    elements += [element(i, covered=True) for i in range(10, 12)]
+    assert "Something is on top" not in format_snapshot(page(elements=elements))
+
+
+def test_a_nearly_empty_page_is_not_judged() -> None:
+    # Two of three covered is 67%, but on three elements that means nothing.
+    elements = [element(1, covered=True), element(2, covered=True), element(3)]
+    assert "Something is on top" not in format_snapshot(page(elements=elements))
+
+
+def test_reachable_elements_beat_merely_visible_ones_for_the_budget() -> None:
+    # Everything behind a dialog is still on screen. Filling the budget with
+    # them is how the few that can be clicked fall off the end of the list.
+    covered = [element(i, covered=True) for i in range(1, 121)]
+    usable = [element(i, name=f"Usable {i}") for i in range(121, 126)]
+
+    out = format_snapshot(page(elements=covered + usable), max_elements=10)
+
+    for ref in range(121, 126):
+        assert f"[{ref}] " in out
+
+
+# --- what counts as a sensitive field -----------------------------------------
+
+
+def test_a_button_is_not_a_field_whatever_its_label_says() -> None:
+    # IRCTC put a paragraph mentioning Aadhaar into the aria-label of both
+    # buttons in its language dialog, and both came back flagged.
+    button = {"tag": "button", "ariaLabel": "... Aadhaar-verified users ..."}
+    assert is_sensitive_field(button) is False
+    assert is_sensitive_field({"tag": "a", "name": "card number"}) is False
+
+
+def test_a_real_field_with_the_same_words_still_is() -> None:
+    assert is_sensitive_field({"tag": "input", "fieldName": "card_number"}) is True
+    assert is_sensitive_field({"tag": "input", "type": "password"}) is True
+
+
+def test_a_contenteditable_can_hold_a_secret() -> None:
+    assert is_sensitive_field({"tag": "div", "fillable": True, "ariaLabel": "OTP"}) is True
+
+
+def test_a_paragraph_is_not_a_label() -> None:
+    prose = "Only Aadhaar-verified users can book tatkal tickets; " + "more text " * 40
+    assert is_sensitive_field({"tag": "input", "ariaLabel": prose}) is False
+    # The short form of the same thing still counts.
+    assert is_sensitive_field({"tag": "input", "ariaLabel": "Aadhaar number"}) is True
