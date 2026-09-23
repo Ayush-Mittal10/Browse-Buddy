@@ -271,7 +271,7 @@ def test_an_empty_model_turn_still_has_a_part() -> None:
 
 async def test_gemini_without_a_key_says_so() -> None:
     backend = GeminiLLM(api_key="")
-    backend.api_key = ""
+    backend.keys = []   # api_key is now derived from the list
     with pytest.raises(LLMError) as exc:
         await backend.complete(system="s", tools=[], messages=[user("hi")])
     assert "GEMINI_API_KEY" in str(exc.value)
@@ -412,8 +412,86 @@ def test_an_unknown_model_still_gets_a_suggestion() -> None:
     assert _try_instead("gemini-9-something") == "gemini-3.1-flash-lite"
 
 
-def test_the_default_model_is_the_least_contended_one() -> None:
+def test_the_default_model_is_somewhere_in_the_suggestions() -> None:
     from browser_agent import config
     from browser_agent.gemini import _BY_CONTENTION
 
-    assert _BY_CONTENTION[0] == config.GEMINI_MODEL
+    # The list is ordered by how contended each model is, and the default is
+    # chosen for how well it runs a task — so the default is not necessarily
+    # first, but suggesting a model nobody can reach would be useless.
+    assert config.GEMINI_MODEL in _BY_CONTENTION
+
+
+# --- more than one key --------------------------------------------------------
+
+
+class _Response:
+    def __init__(self, code: int):
+        self.status_code = code
+        self.headers: dict = {}
+
+    def json(self) -> dict:
+        return {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}
+
+
+class _Client:
+    """Answers with scripted status codes and records which key was used."""
+
+    def __init__(self, *codes: int):
+        self.codes = list(codes)
+        self.keys_used: list[str] = []
+
+    async def post(self, url, json=None, headers=None):
+        self.keys_used.append(headers["x-goog-api-key"])
+        return _Response(self.codes.pop(0) if self.codes else 200)
+
+
+def _with_keys(*keys: str, codes: tuple[int, ...] = ()) -> GeminiLLM:
+    llm = GeminiLLM()
+    llm.keys = list(keys)
+    llm._client = _Client(*codes)
+    return llm
+
+
+async def test_a_rate_limited_key_falls_through_to_the_next() -> None:
+    # The free tier is limited per project, so a task of any length runs into
+    # that before it runs into anything else.
+    llm = _with_keys("one", "two", codes=(429, 429, 429, 200))
+
+    reply = await llm.complete(system="s", tools=[], messages=[user("hi")])
+
+    assert reply.text == "hi"
+    assert "two" in llm._client.keys_used
+
+
+async def test_the_key_that_worked_is_used_next_time() -> None:
+    # Starting from the top every call would burn the exhausted key again.
+    llm = _with_keys("one", "two", codes=(429, 429, 429, 200))
+    await llm.complete(system="s", tools=[], messages=[user("hi")])
+    assert llm.api_key == "two"
+
+
+async def test_every_key_limited_says_so() -> None:
+    llm = _with_keys("one", "two", codes=(429,) * 8)
+    with pytest.raises(LLMError) as exc:
+        await llm.complete(system="s", tools=[], messages=[user("hi")])
+    assert "All of them are limited" in str(exc.value)
+
+
+async def test_one_key_is_told_how_to_have_more() -> None:
+    llm = _with_keys("only", codes=(429, 429, 429))
+    with pytest.raises(LLMError) as exc:
+        await llm.complete(system="s", tools=[], messages=[user("hi")])
+    assert "GEMINI_API_KEYS" in str(exc.value)
+
+
+async def test_a_working_key_is_not_rotated_away_from() -> None:
+    llm = _with_keys("one", "two", codes=(200,))
+    await llm.complete(system="s", tools=[], messages=[user("hi")])
+    assert llm.api_key == "one"
+    assert llm._client.keys_used == ["one"]
+
+
+def test_a_caller_supplied_key_is_used_alone() -> None:
+    # A visitor's own key must not fall through to the host's.
+    assert GeminiLLM(api_key="theirs").keys == ["theirs"]

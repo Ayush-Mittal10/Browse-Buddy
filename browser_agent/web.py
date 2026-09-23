@@ -49,11 +49,13 @@ BYOK_PROVIDERS = ("anthropic", "openai")
 # is known to work with tool calling.
 MODELS = {
     "gemini": [
-        # The bigger Flash models answer 503 on the free tier most of the time.
+        # Ordered by how well they actually run a task, not by size. 3.8 still
+        # answers 503 on the free tier; flash-lite is the quickest to reply and
+        # the likeliest to stop after one page.
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
-        "gemini-3.5-flash",
-        "gemini-3.8-flash",
     ],
     "anthropic": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
     "openai": ["gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1-mini", "gpt-4o-mini"],

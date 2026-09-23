@@ -76,6 +76,7 @@ def _declaration(tool: dict) -> dict:
 _BY_CONTENTION = (
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.8-flash",
 )
@@ -95,9 +96,21 @@ class GeminiLLM:
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):
         self.name = model or config.GEMINI_MODEL
-        self.api_key = api_key or config.GEMINI_API_KEY
+        # One key, or several to fall through. The free tier is rate limited per
+        # project and a task of any length hits that before anything else, so a
+        # second key is the difference between finishing and stopping halfway.
+        self.keys = [api_key] if api_key else [
+            k for k in (list(config.GEMINI_API_KEYS) or [config.GEMINI_API_KEY]) if k
+        ]
         self.base_url = (base_url or config.GEMINI_BASE_URL).rstrip("/")
+        # Where to start next time. Kept so a key that has said no is not asked
+        # again on every subsequent call.
+        self._key = 0
         self._client = None
+
+    @property
+    def api_key(self) -> str:
+        return self.keys[self._key] if self.keys else ""
 
     def _http(self):
         if self._client is None:
@@ -152,17 +165,30 @@ class GeminiLLM:
             "generationConfig": {"temperature": 0, "maxOutputTokens": config.MAX_TOKENS},
         }
         url = f"{self.base_url}/models/{self.name}:generateContent"
-        try:
-            response = await post_with_retry(
-                self._http(), url, json=body, headers={"x-goog-api-key": self.api_key}
-            )
-        except Exception as e:
-            raise LLMError(f"Could not reach Gemini: {type(e).__name__}: {e}") from e
+        # Each key gets one go. post_with_retry has already waited out the
+        # transient case by the time one answers 429, so a key that still says
+        # no here is out of quota rather than momentarily busy.
+        for attempt in range(len(self.keys)):
+            try:
+                response = await post_with_retry(
+                    self._http(), url, json=body, headers={"x-goog-api-key": self.api_key}
+                )
+            except Exception as e:
+                raise LLMError(f"Could not reach Gemini: {type(e).__name__}: {e}") from e
+            if response.status_code != 429 or attempt == len(self.keys) - 1:
+                break
+            self._key = (self._key + 1) % len(self.keys)
+            logger.info("Gemini key %d is rate limited; trying the next one", attempt + 1)
 
         if response.status_code == 429:
+            spare = (
+                " All of them are limited right now."
+                if len(self.keys) > 1
+                else " Set GEMINI_API_KEYS with more than one key to fall through to another."
+            )
             raise LLMError(
                 "Gemini's free tier is rate limited and this key has hit it. "
-                "Wait a minute, or use a different provider."
+                "Wait a minute, or use a different provider." + spare
             )
         if response.status_code == 503:
             instead = _try_instead(self.name)

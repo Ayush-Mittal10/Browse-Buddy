@@ -44,6 +44,12 @@ it onto the paid tier, where every call answers
 They do not have to be the same project. Run the service in the billed one and
 issue the key from another.
 
+**Give it more than one Gemini key.** The free tier is rate limited per
+project, and a task long enough to be worth watching runs into that before it
+runs into anything else. Keys from separate projects go in `GEMINI_API_KEYS`,
+comma or space separated, and are used one at a time — the next is tried only
+when the current one answers 429.
+
 **Cap the spend.** Every step is one API call against your key. Put the demo key
 in its own workspace with a hard monthly limit — the only control that cannot be
 coded around. The in-app caps (steps, tasks, concurrent browsers, idle timeout)

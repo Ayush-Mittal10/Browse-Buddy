@@ -85,6 +85,17 @@ def _env_bool(name: str, default: bool) -> bool:
     return default
 
 
+def _env_list(name: str, *, lower: bool = True) -> tuple[str, ...]:
+    """A list from one variable, separated by commas or whitespace.
+
+    Both, because a comma is what a person writes and a space is what `gcloud`
+    can be given without the value being read as a second variable.
+    """
+    raw = (os.getenv(name) or "").replace(",", " ").split()
+    items = (item.strip() for item in raw if item.strip())
+    return tuple(i.lower().lstrip(".") for i in items) if lower else tuple(items)
+
+
 # --- LLM ---------------------------------------------------------------------
 
 # "anthropic", "openai", "gemini", "ollama", or "auto" — the first hosted
@@ -105,12 +116,22 @@ OPENAI_MODEL = _env_str("BROWSER_AGENT_OPENAI_MODEL", "gpt-5.4-mini")
 OPENAI_BASE_URL = _env_str("BROWSER_AGENT_OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 # Gemini. GOOGLE_API_KEY is what Google's own tooling sets, so accept either.
-GEMINI_API_KEY = _env_str("GEMINI_API_KEY", "") or _env_str("GOOGLE_API_KEY", "")
-# Flash-lite rather than the bigger Flash models on purpose: measured on the
-# free tier, gemini-3.8-flash, gemini-3.5-flash and gemini-flash-latest all
-# answered 503 "high demand" while flash-lite answered in 1.2s. A default
-# that is usually unavailable is not a default.
-GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.1-flash-lite")
+# More than one may be given, separated by commas or spaces: the free tier is
+# rate limited per project, and a task of any length runs into that before it
+# runs into anything else. Keys are rotated on a 429 rather than pooled, so one
+# is used until it says no.
+GEMINI_API_KEYS = _env_list("GEMINI_API_KEYS", lower=False)
+GEMINI_API_KEY = (
+    _env_str("GEMINI_API_KEY", "")
+    or _env_str("GOOGLE_API_KEY", "")
+    or (GEMINI_API_KEYS[0] if GEMINI_API_KEYS else "")
+)
+# Measured across four calls each: flash-lite answered 4/4 in 2.1s, 3.5-flash
+# 3/4 in 31s, 3.6-flash 4/4 in 6.6s. Speed is not the thing that decides it —
+# on a real task flash-lite opens one page and summarises it, while 3.6-flash
+# asks which date you meant and then fills the form in. Four seconds a step
+# buys an agent that does the job.
+GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_BASE_URL = _env_str(
     "BROWSER_AGENT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )
@@ -211,11 +232,6 @@ SCREENSHOT_JPEG_QUALITY = _env_int("BROWSER_AGENT_SCREENSHOT_QUALITY", 55)
 
 
 # --- Serving this to other people --------------------------------------------
-
-def _env_list(name: str) -> tuple[str, ...]:
-    raw = (os.getenv(name) or "").replace(",", " ").split()
-    return tuple(item.strip().lower().lstrip(".") for item in raw if item.strip())
-
 
 # Empty means any public website. Set it to a handful of hosts before putting
 # this somewhere strangers can type into it: an agent that will visit anything
