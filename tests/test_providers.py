@@ -819,3 +819,43 @@ def test_events_without_a_candidate_are_skipped() -> None:
     parts, blocked = _collect([{"usageMetadata": {"totalTokenCount": 10}}, {"candidates": []}])
     assert parts == []
     assert blocked == ""
+
+
+# --- saying what is happening -------------------------------------------------
+
+
+async def test_the_first_chunk_is_announced() -> None:
+    # The only moment that answers "is it working or is it hung".
+    seen = []
+    client = FakeStreamClient(FakeStream(200, sse({"a": 1}, {"b": 2})))
+    await stream(client, on_progress=seen.append)
+
+    # Once, on the first event — not once per chunk.
+    assert seen == ["answering"]
+
+
+async def test_a_stall_is_announced_before_the_wait() -> None:
+    seen = []
+    client = FakeStreamClient(httpx.ReadTimeout("quiet"), FakeStream(200, sse({"a": 1})))
+    await stream(client, on_progress=seen.append)
+
+    assert seen == ["stalled", "answering"]
+
+
+async def test_a_busy_provider_is_announced_too() -> None:
+    seen = []
+    client = FakeStreamClient(FakeStream(503, []), FakeStream(200, sse({"a": 1})))
+    await stream(client, on_progress=seen.append)
+
+    assert seen == ["busy", "answering"]
+
+
+async def test_a_listener_that_throws_does_not_lose_the_reply() -> None:
+    # Progress is a courtesy. A broken one must not cost the answer.
+    def boom(_status):
+        raise RuntimeError("no")
+
+    client = FakeStreamClient(FakeStream(200, sse({"a": 1})))
+    result = await stream(client, on_progress=boom)
+
+    assert result.events == [{"a": 1}]

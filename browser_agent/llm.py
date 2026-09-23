@@ -93,6 +93,7 @@ async def stream_with_retry(
     gap_s: float,
     total_s: float,
     on_event=None,
+    on_progress=None,
     attempts: int = 3,
     delay: float = 2.0,
 ) -> Streamed:
@@ -108,6 +109,10 @@ async def stream_with_retry(
 
     A failure part-way through discards what arrived and re-sends: the reply is
     only useful whole, and half a tool call is not worth keeping.
+
+    `on_progress` is told what is happening in one word — answering, stalled,
+    busy — so a caller can say so rather than showing nothing for twenty
+    seconds and letting it be read as a crash.
     """
     host = url.split("/")[2]
     for attempt in range(attempts):
@@ -115,24 +120,38 @@ async def stream_with_retry(
         try:
             result = await _stream_once(
                 client, url, json=json, headers=headers, gap_s=gap_s,
-                total_s=total_s, on_event=on_event,
+                total_s=total_s, on_event=on_event, on_progress=on_progress,
             )
         except (httpx.TransportError, TimeoutError) as e:
             if last:
                 raise
             wait = delay * (2**attempt)
             logger.info("%s from %s; retrying in %.0fs", type(e).__name__, host, wait)
+            _tell(on_progress, "stalled")
             await asyncio.sleep(wait)
             continue
         if result.status_code not in RETRYABLE or last:
             return result
         wait = delay * (2**attempt)
         logger.info("HTTP %s from %s; retrying in %.0fs", result.status_code, host, wait)
+        _tell(on_progress, "busy")
         await asyncio.sleep(wait)
     return result
 
 
-async def _stream_once(client, url, *, json, headers, gap_s, total_s, on_event) -> Streamed:
+def _tell(on_progress, status: str) -> None:
+    """Progress is a courtesy. A listener that throws must not lose the reply."""
+    if on_progress is None:
+        return
+    try:
+        on_progress(status)
+    except Exception:
+        logger.debug("progress listener failed", exc_info=True)
+
+
+async def _stream_once(
+    client, url, *, json, headers, gap_s, total_s, on_event, on_progress=None
+) -> Streamed:
     """One attempt. `gap_s` is httpx's read timeout, which on a stream is the
     wait for the *next* chunk; `total_s` bounds the response as a whole."""
     timeout = httpx.Timeout(gap_s, connect=min(gap_s, 15.0))
@@ -156,6 +175,10 @@ async def _stream_once(client, url, *, json, headers, gap_s, total_s, on_event) 
                     event = _json_loads(payload)
                 except ValueError:
                     continue
+                if not events:
+                    # The first chunk is the answer to "is it working or hung",
+                    # and it is the only moment that answers it.
+                    _tell(on_progress, "answering")
                 events.append(event)
                 if on_event is not None:
                     on_event(event)
@@ -251,6 +274,10 @@ class LLM(Protocol):
     name: str
     provider: str
     supports_images: bool
+    # Told in one word how a reply in flight is going, when the backend streams.
+    # The agent sets it; a backend that waits for the whole answer never calls
+    # it, because it has nothing to report until it has everything.
+    on_progress: Any
 
     async def complete(self, *, system: str, tools: list[dict], messages: list[dict]) -> Reply: ...
 
@@ -265,6 +292,7 @@ class AnthropicLLM:
 
     provider = "anthropic"
     supports_images = True
+    on_progress = None
 
     def __init__(self, model: str = "", api_key: str = "", max_tokens: int | None = None):
         self.name = model or config.MODEL

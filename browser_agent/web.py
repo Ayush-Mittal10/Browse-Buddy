@@ -386,6 +386,7 @@ def _make_agent(request: dict, say, *, local: bool = False) -> BrowserAgent:
             type="action", name=name, detail=describe_action(name, args)
         ),
         on_frame=lambda data, mime: say(type="frame", data=data),
+        on_progress=lambda status: say(type="progress", status=status),
     )
     return agent
 

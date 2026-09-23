@@ -25,6 +25,7 @@ class OpenAILLM:
 
     provider = "openai"
     supports_images = True
+    on_progress = None
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):
         self.name = model or config.OPENAI_MODEL

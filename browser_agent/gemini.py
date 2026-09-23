@@ -121,6 +121,7 @@ def _try_instead(current: str) -> str:
 class GeminiLLM:
     provider = "gemini"
     supports_images = True
+    on_progress = None
 
     def __init__(self, model: str = "", api_key: str = "", base_url: str = ""):
         self.name = model or config.GEMINI_MODEL
@@ -209,6 +210,7 @@ class GeminiLLM:
                     headers={"x-goog-api-key": self.api_key},
                     gap_s=config.HTTP_STREAM_GAP_S,
                     total_s=config.HTTP_TIMEOUT_S,
+                    on_progress=self.on_progress,
                 )
             except Exception as e:
                 raise LLMError(unreachable("Gemini", e)) from e

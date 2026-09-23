@@ -30,6 +30,7 @@ class OllamaLLM:
     """Talks to a local Ollama server over its chat API."""
 
     provider = "ollama"
+    on_progress = None
 
     # Text-only models cannot read a screenshot. The agent checks this and
     # stops offering the tool rather than letting the model call something

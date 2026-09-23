@@ -165,6 +165,7 @@ class BrowserAgent:
         on_text: Callable[[str], None] | None = None,
         on_action: Callable[[str, dict], None] | None = None,
         on_frame: Callable[[str, str], None] | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ):
         self.headless = config.HEADLESS if headless is None else headless
         self.llm = backend or llm.build(provider, model or "", api_key)
@@ -173,6 +174,11 @@ class BrowserAgent:
         self.on_text = on_text
         self.on_action = on_action
         self.on_frame = on_frame
+        self.on_progress = on_progress
+        # The backend reports on a reply in flight; the agent owns the listener
+        # because it is the agent's caller that wants to hear about it. Without
+        # this a slow model is twenty seconds of a screen that looks crashed.
+        self.llm.on_progress = on_progress
 
         # A model that cannot see is not offered the camera.
         self.tools = [

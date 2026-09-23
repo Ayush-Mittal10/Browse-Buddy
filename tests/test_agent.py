@@ -688,3 +688,24 @@ async def test_a_stop_does_not_carry_into_the_next_turn(session, serve) -> None:
     # one it was meant for.
     assert outcome.state == WAITING
     assert outcome.text == "first"
+
+
+# --- saying that the model is still there -------------------------------------
+
+
+async def test_the_backend_is_given_somewhere_to_report_progress() -> None:
+    # The agent's caller is the one that wants to hear it, so the agent owns the
+    # listener and hands it to whichever backend it built.
+    seen = []
+    backend = FakeLLM(Reply(text="done"))
+    agent = BrowserAgent(backend=backend, on_progress=seen.append)
+
+    assert agent.llm.on_progress is not None
+    agent.llm.on_progress("stalled")
+    assert seen == ["stalled"]
+
+
+async def test_a_backend_without_a_listener_is_left_alone() -> None:
+    backend = FakeLLM(Reply(text="done"))
+    agent = BrowserAgent(backend=backend)
+    assert agent.llm.on_progress is None

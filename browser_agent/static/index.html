@@ -247,6 +247,21 @@ function setState(next) {
   refreshButton();
 }
 
+/* A reply in flight, in one word. The model going quiet for twenty seconds is
+   indistinguishable from a crash unless something says otherwise. */
+const STALLS = {
+  stalled: 'The model went quiet — asking it again.',
+  busy: 'The model is busy right now — asking it again.',
+};
+
+function progress(status) {
+  // 'answering' happens on every step, so it belongs in the status line rather
+  // than the transcript. A stall is rare and worth saying out loud, because the
+  // pause it explains is the part that reads as broken.
+  if (state === 'running') stateLabel.textContent = status;
+  if (STALLS[status]) line('note', STALLS[status]);
+}
+
 function showFrame(data) {
   if (!frame) {
     placeholder.remove();
@@ -385,6 +400,7 @@ function connect() {
       case 'action':    step(message.detail); break;
       case 'ready':     modelLabel.textContent = `${message.provider} · ${message.model}`; break;
       case 'status':    setState(message.state); break;
+      case 'progress':  progress(message.status); break;
       case 'media':     handOver(message); break;
       case 'error':     line('bad', message.text); setState('idle'); break;
       case 'report':
