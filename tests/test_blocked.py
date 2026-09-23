@@ -70,7 +70,9 @@ def test_google_gets_told_it_is_hopeless_specifically() -> None:
     # Measured: the home page loads, every search ends here, typing into the box
     # is no different from opening a /search URL.
     assert "Google blocks automated searching entirely" in advice
-    assert "duckduckgo.com/html" in advice
+    # The /html endpoint answers 403 now; the plain query form works and
+    # returns more results. Measured, not assumed.
+    assert "duckduckgo.com/?q=" in advice
 
 
 def test_other_sites_get_general_advice() -> None:

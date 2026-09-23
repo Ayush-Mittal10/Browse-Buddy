@@ -30,6 +30,7 @@ import contextvars
 import ipaddress
 import logging
 import random
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -212,12 +213,12 @@ def blocked_advice(url: str) -> str:
     if "google." in host:
         advice += (
             " Google blocks automated searching entirely; its home page loads but every "
-            "search ends here. Use https://duckduckgo.com/html/?q=your+terms instead, "
+            "search ends here. Use https://duckduckgo.com/?q=your+terms instead, "
             "which works."
         )
     else:
         advice += (
-            " Go to a different site. For searching, https://duckduckgo.com/html/?q=your+terms "
+            " Go to a different site. For searching, https://duckduckgo.com/?q=your+terms "
             "works."
         )
     return advice + " If the task needs this particular site, tell the user it is blocking "\
@@ -286,12 +287,15 @@ class BrowserSession:
                 headless=self.headless,
                 args=_launch_args(),
             )
+            agent = config.USER_AGENT or await self._plausible_user_agent()
             self._context = await self._browser.new_context(
                 viewport=config.VIEWPORT,
                 locale=config.LOCALE,
                 timezone_id=config.TIMEZONE,
-                user_agent=config.USER_AGENT or await self._plausible_user_agent(),
+                user_agent=agent,
             )
+            if agent:
+                await self._context.set_extra_http_headers(self._client_hints(agent))
             page = await self._context.new_page()
         except Exception as e:
             await self.close()
@@ -311,6 +315,35 @@ class BrowserSession:
         if self.live is not None:
             await self.live.follow(self._context, page)
         logger.info("Browser session started (headless=%s)", self.headless)
+
+    @staticmethod
+    def _client_hints(agent: str) -> dict[str, str]:
+        """The Sec-CH-UA headers that go with a user agent.
+
+        Overriding the user agent does not change these, and headless Chromium
+        puts "HeadlessChrome" in them — so the browser ends up claiming to be
+        Chrome in one header and something else in another. Several large sites
+        (measured: irctc.co.in, makemytrip.com) drop the connection on that
+        mismatch, and Chromium reports the dropped connection as
+        ERR_HTTP2_PROTOCOL_ERROR, which looks like anything but a header
+        problem. Sending hints that agree with the user agent fixes it.
+        """
+        version = re.search(r"Chrome/(\d+)", agent)
+        if not version:
+            return {}
+        major = version.group(1)
+        platform = "Linux"
+        if "Macintosh" in agent:
+            platform = "macOS"
+        elif "Windows" in agent:
+            platform = "Windows"
+        return {
+            "sec-ch-ua": (
+                f'"Chromium";v="{major}", "Not(A:Brand";v="24", "Google Chrome";v="{major}"'
+            ),
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": f'"{platform}"',
+        }
 
     async def _plausible_user_agent(self) -> str | None:
         """Chromium's own user agent, minus the word that gives the game away.

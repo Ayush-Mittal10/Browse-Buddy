@@ -30,7 +30,7 @@ search engine. Do not repeat an identical action a third time.
 - Some sites refuse automated browsers. A page saying "unusual traffic", showing a CAPTCHA, \
 answering 403, or failing to connect will not get better by being reloaded — go somewhere else \
 instead. Never try to solve a bot check.
-- To search, use https://duckduckgo.com/html/?q=your+terms. It works. Google does not: its home \
+- To search, use https://duckduckgo.com/?q=your+terms. It works. Google does not: its home \
 page loads, but every search from here ends on a bot check, whether you type in the box or open a \
 search URL directly. Do not start with Google. Better still, when you know the site that has the \
 answer, go straight there.

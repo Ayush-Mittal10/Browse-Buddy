@@ -290,3 +290,55 @@ def test_a_laptop_keeps_chromiums_own_sandbox(monkeypatch) -> None:
 
     monkeypatch.setattr(config, "CONTAINER", False)
     assert "--no-sandbox" not in _launch_args()
+
+
+# --- client hints -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("agent", "platform", "major"),
+    [
+        ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) Chrome/153.0.8010.12 Safari/537.36", "macOS", "153"),
+        ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36", "Linux", "141"),
+        ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36", "Windows", "140"),
+    ],
+)
+def test_client_hints_follow_the_user_agent(agent: str, platform: str, major: str) -> None:
+    hints = BrowserSession._client_hints(agent)
+
+    # Overriding the user agent does not change these, and a browser that claims
+    # to be Chrome in one header and something else in another gets its
+    # connection dropped — reported by Chromium as ERR_HTTP2_PROTOCOL_ERROR,
+    # which looks like anything but a header problem. Measured on irctc.co.in
+    # and makemytrip.com, both of which went from that error to HTTP 200.
+    assert hints["sec-ch-ua-platform"] == f'"{platform}"'
+    assert f'"Google Chrome";v="{major}"' in hints["sec-ch-ua"]
+    assert hints["sec-ch-ua-mobile"] == "?0"
+
+
+def test_a_user_agent_with_no_version_gets_no_hints() -> None:
+    # Better to send nothing than to send hints that disagree with it.
+    assert BrowserSession._client_hints("something else entirely") == {}
+
+
+async def test_the_hints_a_site_receives_agree_with_the_agent(session, serve) -> None:
+    seen = {}
+
+    async def capture(route, request):
+        seen.update(request.headers)
+        await route.fulfill(status=200, content_type="text/html", body="<title>H</title>")
+
+    await session._context.route("https://hints.test/**", capture)
+    await session.navigate("https://hints.test/")
+
+    assert "sec-ch-ua" in seen
+    assert "Headless" not in seen["sec-ch-ua"]
+    assert "Headless" not in seen["user-agent"]
+    # The major version in both has to be the same number.
+    import re
+
+    from_agent = re.search(r"Chrome/(\d+)", seen["user-agent"]).group(1)
+    assert f'v="{from_agent}"' in seen["sec-ch-ua"]
