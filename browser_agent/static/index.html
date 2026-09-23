@@ -335,6 +335,7 @@ function connect() {
       case 'action':    step(message.detail); break;
       case 'ready':     modelLabel.textContent = `${message.provider} · ${message.model}`; break;
       case 'status':    setState(message.state); break;
+      case 'media':     handOver(message); break;
       case 'error':     line('bad', message.text); setState('idle'); break;
       case 'report':
         // When the model answers in text instead of calling finish_task, the
@@ -394,6 +395,69 @@ themeToggle.addEventListener('click', () => {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem('browse-buddy:theme', next); } catch (e) { /* private mode */ }
 });
+
+/* ---------- handing a video over ----------
+   The browser doing the work has no speakers, so anything meant to be watched
+   is opened where the person actually is. Opening it for them needs the
+   browser's permission: a popup is only allowed shortly after a click, and a
+   task takes far longer than that, so this tries and then copes with being
+   refused rather than pretending it worked. */
+
+const AUTO_OPEN = 'browse-buddy:auto-open';
+
+function autoOpenWanted() {
+  try { return localStorage.getItem(AUTO_OPEN) !== 'off'; } catch (e) { return true; }
+}
+
+function handOver(info) {
+  const opened = autoOpenWanted() && tryOpen(info.url);
+  const card = document.createElement('div');
+  card.className = 'msg agent media-card';
+
+  const label = document.createElement('div');
+  label.className = 'media-title';
+  label.textContent = opened
+    ? 'Opened in a new tab — it plays there, with sound.'
+    : 'Ready to play, with sound:';
+  card.appendChild(label);
+
+  const link = document.createElement('a');
+  link.className = 'media-open';
+  link.href = info.url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = opened ? info.url : 'Open in a new tab';
+  card.appendChild(link);
+
+  if (!opened && autoOpenWanted()) {
+    const note = document.createElement('p');
+    note.className = 'media-note';
+    note.textContent =
+      'Your browser blocked the new tab. Allow pop-ups for this site and the '
+      + 'next one opens by itself.';
+    card.appendChild(note);
+  }
+
+  log.appendChild(card);
+  log.scrollTop = log.scrollHeight;
+}
+
+function tryOpen(url) {
+  // A blocked popup comes back as null rather than throwing, so the return
+  // value is the only way to tell whether it actually happened.
+  //
+  // Deliberately NOT window.open(url, '_blank', 'noopener'): that form returns
+  // null even on success, which made this report every opened tab as blocked.
+  // Clearing opener afterwards gives the same protection and still answers.
+  try {
+    const w = window.open(url, '_blank');
+    if (!w) return false;
+    try { w.opener = null; } catch (e) { /* cross-origin, already safe */ }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 /* ---------- the working animation ----------
    On only while the agent is actually doing something. An idle page that

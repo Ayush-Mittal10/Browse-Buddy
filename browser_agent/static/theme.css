@@ -195,6 +195,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 }
 .msg.agent a { color: var(--accent); }
 
+.media-card { display: flex; flex-direction: column; gap: 6px; }
+.media-title { font-weight: 600; }
+.media-open {
+  align-self: flex-start;
+  color: var(--accent);
+  word-break: break-all;
+  font-size: 13px;
+}
+.media-note { margin: 2px 0 0; color: var(--dim); font-size: 12px; }
+
 /* ── composer ─────────────────────────────────────────────────────────── */
 
 #suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }

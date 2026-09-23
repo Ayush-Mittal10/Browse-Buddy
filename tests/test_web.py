@@ -574,3 +574,52 @@ def test_the_working_ring_is_only_drawn_while_working(web) -> None:
 def test_motion_can_be_turned_off(web) -> None:
     css = web.get("/static/theme.css").text
     assert "prefers-reduced-motion: reduce" in css
+
+
+# --- handing a video to the viewer --------------------------------------------
+
+
+def test_landing_on_a_video_offers_it_to_the_viewer(web, monkeypatch) -> None:
+    from browser_agent.agent import FINISHED
+
+    class PlaysAVideo(FakeAgent):
+        async def run(self, message, **kwargs):
+            await super().run(message, **kwargs)
+            return BrowserOutcome(
+                "Playing it now.", FINISHED, "https://www.youtube.com/watch?v=EGN6A0Hrn48"
+            )
+
+    monkeypatch.setattr("browser_agent.web.BrowserAgent", PlaysAVideo)
+
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "play a meme video on youtube"})
+        seen = drain(socket, until="media")
+
+    card = seen[-1]
+    assert card["provider"] == "youtube"
+    assert card["url"] == "https://www.youtube.com/watch?v=EGN6A0Hrn48"
+    assert "/embed/EGN6A0Hrn48" in card["embed"]
+
+
+def test_an_ordinary_page_offers_nothing(web) -> None:
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "read the news"})
+        seen = drain(socket, until="report")
+
+    # The fake finishes on example.com, which is not something to watch.
+    assert not any(m["type"] == "media" for m in seen)
+
+
+def test_the_page_copes_with_a_blocked_popup(web) -> None:
+    page = web.get("/").text
+    # A blocked popup returns null rather than throwing, so the return value is
+    # the only way to know, and the page has to say so instead of claiming it
+    # opened something.
+    assert "blocked the new tab" in page
+    # The 'noopener' feature makes window.open return null even when it
+    # succeeded, which reported every opened tab as blocked. The call itself
+    # must not use it; the comment explaining why is allowed to mention it.
+    assert "const w = window.open(url, '_blank');" in page
+    assert "window.open(url, '_blank', 'noopener')" not in page.replace(
+        "// Deliberately NOT window.open(url, '_blank', 'noopener')", ""
+    )

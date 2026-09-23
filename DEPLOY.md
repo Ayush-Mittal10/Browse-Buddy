@@ -27,6 +27,10 @@ Those four are what the built-in suggestion pills use, and none of them fight
 automated browsers — a demo's first impression should not be a CAPTCHA. Add to
 the list rather than replacing it, or the suggestions stop working.
 
+Add `youtube.com` if you want "play me a video" to work. The agent finds the
+video and hands the link to the visitor's own browser, which is where it can
+actually be heard — see the note on sound in README.md.
+
 **Keep the Gemini key in a project with no billing account.** Cloud Run needs
 billing; the Gemini free tier needs the absence of it, and the free tier is
 per-project. Linking a billing account to the project that issued your key moves

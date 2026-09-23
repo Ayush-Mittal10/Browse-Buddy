@@ -90,6 +90,19 @@ docker run -p 8080:8080 -e GEMINI_API_KEY=... browse-buddy
 fails at deploy rather than on someone's first click. See
 [DEPLOY.md](DEPLOY.md) for Cloud Run.
 
+## Sound
+
+The browser doing the work runs on the server, and a server has no speakers —
+headless Chromium has no audio output device at all. Streaming that audio back
+would mean a virtual sound card, an encoder and a second transport, to deliver a
+worse copy of something the viewer's own browser plays perfectly.
+
+So when a task ends on a video, the agent hands the link over: the page opens it
+in a new tab, where it plays with sound, under the viewer's control, and keeps
+playing after the task and the connection have both ended. Browsers only allow a
+tab to be opened shortly after a click, so when that is refused the page says so
+and offers the link instead of pretending.
+
 ## Configure
 
 ```bash

@@ -27,7 +27,7 @@ import logging
 import os
 from pathlib import Path
 
-from browser_agent import __version__, config
+from browser_agent import __version__, config, media
 from browser_agent.agent import BrowserAgent, BrowserUnavailable
 from browser_agent.cli import describe_action
 
@@ -291,6 +291,16 @@ def build_app():
                     continue
 
                 say(type="report", text=outcome.text, state=outcome.state, url=outcome.url)
+                # A server has no speakers, so anything meant to be watched is
+                # handed to the viewer's own browser to play instead.
+                found = media.detect(outcome.url)
+                if found:
+                    say(
+                        type="media",
+                        provider=found.provider,
+                        url=found.url,
+                        embed=found.embed,
+                    )
                 say(type="status", state="idle")
                 # The agent is deliberately kept, finished or not. It holds the
                 # conversation, so discarding it here is what made a follow-up
