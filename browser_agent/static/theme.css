@@ -297,6 +297,15 @@ details#settings summary:hover { color: var(--text); }
 
 @keyframes orbit { to { --angle: 360deg; } }
 
+/* The input's ring is deliberately still. Two things orbiting at once pulls
+   the eye back and forth between them; the browser panel is where the work is
+   actually visible, so it keeps the moving one and this just glows. */
+#inputWrap.thinking::before {
+  animation: none;
+  background: linear-gradient(90deg, var(--accent), #a855f7);
+  opacity: .8;
+}
+
 /* The ring replaces the input's own border while it is on, so the two do not
    sit on top of each other as a double line. */
 #inputWrap.thinking textarea { border-color: transparent; }
