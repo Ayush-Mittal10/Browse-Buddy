@@ -161,6 +161,7 @@ def build_app():
 
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.staticfiles import StaticFiles
 
     @asynccontextmanager
     async def lifespan(app):
@@ -175,6 +176,8 @@ def build_app():
         yield
 
     app = FastAPI(title="Browse Buddy", version=__version__, lifespan=lifespan)
+
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     # One browser per visitor is the real cost here, so the cap is on browsers.
     browsers = asyncio.Semaphore(config.WEB_MAX_SESSIONS)

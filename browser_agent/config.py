@@ -159,6 +159,12 @@ VIEWPORT_WIDTH = _env_int("BROWSER_AGENT_VIEWPORT_WIDTH", 1280)
 VIEWPORT_HEIGHT = _env_int("BROWSER_AGENT_VIEWPORT_HEIGHT", 800)
 VIEWPORT = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
+# Chromium's screencast emits frames at the viewport's CSS size and nothing
+# else: maxWidth only ever caps them, never enlarges, and the device pixel
+# ratio makes no difference at all (measured — 1x and 2x produce byte-identical
+# 1280x800 frames). So the viewport is the only thing that decides how much
+# detail the live view can carry.
+
 # Two flags that a container almost always needs and a laptop never does.
 # Chromium's own sandbox wants privileges a container usually withholds, so it
 # fails to start at all; and /dev/shm is typically 64MB in a container, which
@@ -224,10 +230,12 @@ WEB_ALLOW_BYOK = _env_bool("BROWSER_AGENT_WEB_ALLOW_BYOK", True)
 # --- The live view -----------------------------------------------------------
 
 # Frames streamed out of the DevTools protocol, for a viewer watching the run.
-# Measured at ~10fps and ~67 KB/s with these values, from a headless browser.
-LIVE_QUALITY = _env_int("BROWSER_AGENT_LIVE_QUALITY", 50)
-LIVE_MAX_WIDTH = _env_int("BROWSER_AGENT_LIVE_MAX_WIDTH", 1024)
-LIVE_MAX_HEIGHT = _env_int("BROWSER_AGENT_LIVE_MAX_HEIGHT", 640)
+# The cap matches the viewport so nothing is thrown away: it used to be 1024
+# wide, which shrank every frame and then had it stretched back up on screen —
+# blurred twice over, once by the downscale and once by JPEG at quality 50.
+LIVE_QUALITY = _env_int("BROWSER_AGENT_LIVE_QUALITY", 78)
+LIVE_MAX_WIDTH = _env_int("BROWSER_AGENT_LIVE_MAX_WIDTH", VIEWPORT_WIDTH)
+LIVE_MAX_HEIGHT = _env_int("BROWSER_AGENT_LIVE_MAX_HEIGHT", VIEWPORT_HEIGHT)
 # 1 means every frame Chromium paints. Raise it to thin the stream out.
 LIVE_EVERY_NTH = _env_int("BROWSER_AGENT_LIVE_EVERY_NTH", 1)
 

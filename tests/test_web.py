@@ -526,3 +526,51 @@ def test_every_suggestion_names_a_site_the_default_allowlist_permits() -> None:
         matched = [site for word, site in hints.items() if word in text.lower()]
         assert matched, f"no allowlisted site covers: {text}"
         assert set(matched) <= recommended
+
+
+# --- the stylesheet and its two themes ----------------------------------------
+
+
+def test_the_stylesheet_is_served(web) -> None:
+    response = web.get("/static/theme.css")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+
+
+def test_the_page_asks_for_the_stylesheet(web) -> None:
+    assert "/static/theme.css" in web.get("/").text
+
+
+def test_both_themes_are_defined(web) -> None:
+    css = web.get("/static/theme.css").text
+
+    # Light is the default and dark overrides it, so a visitor who has chosen
+    # nothing gets light rather than whatever happens to cascade.
+    assert ":root {" in css
+    assert ':root[data-theme="dark"]' in css
+    # And a visitor whose system prefers dark gets it without having to ask,
+    # unless they have explicitly chosen light.
+    assert "prefers-color-scheme: dark" in css
+    assert ':root:not([data-theme="light"])' in css
+
+
+def test_dark_is_actually_black(web) -> None:
+    css = web.get("/static/theme.css").text
+    dark = css.split(':root[data-theme="dark"]')[1].split("}")[0]
+    assert "--bg: #000000" in dark
+
+
+def test_the_working_ring_is_only_drawn_while_working(web) -> None:
+    page = web.get("/").text
+    css = web.get("/static/theme.css").text
+
+    # It is a class the page adds and removes, not something always on: a page
+    # that glows while idle reads as broken rather than busy.
+    assert ".thinking::before" in css
+    assert "classList.toggle('thinking'" in page
+
+
+def test_motion_can_be_turned_off(web) -> None:
+    css = web.get("/static/theme.css").text
+    assert "prefers-reduced-motion: reduce" in css
