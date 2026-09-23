@@ -178,3 +178,66 @@ def test_an_unset_list_is_empty(env) -> None:
     from browser_agent.config import _env_list
 
     assert _env_list("BROWSER_AGENT_ALLOWED_DOMAINS") == ()
+
+
+# --- however the keys were written --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("variables", "expected"),
+    [
+        # One key, the ordinary case.
+        ({"GEMINI_API_KEY": "AAA"}, ("AAA",)),
+        # Two in the SINGULAR name. This is the one that mattered: it used to be
+        # sent as a single 107-character key and came back as a 401 about OAuth
+        # credentials, which looks like anything but a typo.
+        ({"GEMINI_API_KEY": "AAA,BBB"}, ("AAA", "BBB")),
+        ({"GEMINI_API_KEYS": "AAA,BBB"}, ("AAA", "BBB")),
+        ({"GEMINI_API_KEYS": "AAA BBB CCC"}, ("AAA", "BBB", "CCC")),
+        ({"GEMINI_API_KEYS": " AAA , BBB "}, ("AAA", "BBB")),
+        # Google's own tooling sets this name.
+        ({"GOOGLE_API_KEY": "AAA,BBB"}, ("AAA", "BBB")),
+        # The plural wins when both are given, rather than being merged.
+        ({"GEMINI_API_KEYS": "AAA,BBB", "GEMINI_API_KEY": "ZZZ"}, ("AAA", "BBB")),
+        ({}, ()),
+    ],
+)
+def test_keys_are_read_the_same_way_whichever_name_holds_them(
+    env, monkeypatch, tmp_path, variables: dict, expected: tuple
+) -> None:
+    import importlib
+
+    for name in ("GEMINI_API_KEY", "GEMINI_API_KEYS", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value)
+
+    import browser_agent.config as config
+
+    # Somewhere with no .env above it. Patching load_dotenv does not work here:
+    # reload re-executes the module, which redefines the function and then
+    # calls it, so the developer's own keys walk straight back in.
+    monkeypatch.chdir(tmp_path)
+    importlib.reload(config)
+    try:
+        assert config.GEMINI_API_KEYS == expected
+        # The singular is the first of the list, so anything that only wants to
+        # know whether Gemini is usable still gets a straight answer.
+        assert config.GEMINI_API_KEY == (expected[0] if expected else "")
+    finally:
+        importlib.reload(config)
+
+
+def test_keys_keep_their_case(env, monkeypatch, tmp_path) -> None:
+    import importlib
+
+    monkeypatch.setenv("GEMINI_API_KEYS", "AQ.MixedCaseKey")
+    import browser_agent.config as config
+
+    monkeypatch.chdir(tmp_path)
+    importlib.reload(config)
+    try:
+        # An API key that has been lowercased is not an API key.
+        assert config.GEMINI_API_KEYS == ("AQ.MixedCaseKey",)
+    finally:
+        importlib.reload(config)

@@ -115,23 +115,36 @@ OPENAI_API_KEY = _env_str("OPENAI_API_KEY", "")
 OPENAI_MODEL = _env_str("BROWSER_AGENT_OPENAI_MODEL", "gpt-5.4-mini")
 OPENAI_BASE_URL = _env_str("BROWSER_AGENT_OPENAI_BASE_URL", "https://api.openai.com/v1")
 
-# Gemini. GOOGLE_API_KEY is what Google's own tooling sets, so accept either.
-# More than one may be given, separated by commas or spaces: the free tier is
-# rate limited per project, and a task of any length runs into that before it
-# runs into anything else. Keys are rotated on a 429 rather than pooled, so one
-# is used until it says no.
-GEMINI_API_KEYS = _env_list("GEMINI_API_KEYS", lower=False)
-GEMINI_API_KEY = (
-    _env_str("GEMINI_API_KEY", "")
+# Gemini. GOOGLE_API_KEY is what Google's own tooling sets, so accept either,
+# and either name may hold more than one key separated by commas or spaces.
+#
+# One list, whichever variable it arrived in. Having a singular and a plural
+# name mean different things is a trap: put two keys in the singular one and it
+# is sent as a single 107-character key, which comes back as a 401 about OAuth
+# credentials and looks like anything but a typo. Whatever is given is split the
+# same way.
+_GEMINI_KEYS = (
+    _env_str("GEMINI_API_KEYS", "")
+    or _env_str("GEMINI_API_KEY", "")
     or _env_str("GOOGLE_API_KEY", "")
-    or (GEMINI_API_KEYS[0] if GEMINI_API_KEYS else "")
 )
-# Measured across four calls each: flash-lite answered 4/4 in 2.1s, 3.5-flash
-# 3/4 in 31s, 3.6-flash 4/4 in 6.6s. Speed is not the thing that decides it —
-# on a real task flash-lite opens one page and summarises it, while 3.6-flash
-# asks which date you meant and then fills the form in. Four seconds a step
-# buys an agent that does the job.
-GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_API_KEYS = tuple(k for k in _GEMINI_KEYS.replace(",", " ").split() if k)
+# The first one, for anything that just wants to know whether Gemini is usable.
+GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""
+
+# Daily quota decides this, not quality. gemini-3.6-flash is plainly the better
+# agent — it asks which date you meant and then fills the form in, where
+# flash-lite opens one page and summarises it — but its free tier allows
+# twenty requests per project per DAY:
+#
+#   GenerateRequestsPerDayPerProjectPerModel-FreeTier, value 20
+#
+# One call per step means that is about two tasks before the key is dead for
+# twenty-four hours. flash-lite has never hit a daily limit here across many
+# dozens of calls; it answers 503 when capacity is short, which passes. A model
+# that stops working after two tasks is not a default, however well it works
+# for those two. Pick 3.6-flash in the model list when a run matters.
+GEMINI_MODEL = _env_str("BROWSER_AGENT_GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_BASE_URL = _env_str(
     "BROWSER_AGENT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )

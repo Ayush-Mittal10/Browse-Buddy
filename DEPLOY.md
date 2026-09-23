@@ -44,6 +44,13 @@ it onto the paid tier, where every call answers
 They do not have to be the same project. Run the service in the billed one and
 issue the key from another.
 
+**Mind the per-model daily quota.** It is per model as well as per project,
+and the numbers are far apart: `gemini-3.6-flash` allows twenty requests a day
+on the free tier, which at one call per step is about two tasks, while
+`gemini-3.1-flash-lite` has never reached its limit here. flash-lite is the
+default for that reason alone — 3.6-flash is the better agent and worth
+selecting by hand when a particular run matters.
+
 **Give it more than one Gemini key.** The free tier is rate limited per
 project, and a task long enough to be worth watching runs into that before it
 runs into anything else. Keys from separate projects go in `GEMINI_API_KEYS`,

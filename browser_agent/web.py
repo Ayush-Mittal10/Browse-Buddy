@@ -49,12 +49,13 @@ BYOK_PROVIDERS = ("anthropic", "openai")
 # is known to work with tool calling.
 MODELS = {
     "gemini": [
-        # Ordered by how well they actually run a task, not by size. 3.8 still
-        # answers 503 on the free tier; flash-lite is the quickest to reply and
-        # the likeliest to stop after one page.
+        # First is the default, and it is first for its daily quota rather than
+        # its quality: 3.6-flash runs a task far better but its free tier is
+        # twenty requests a day, which is about two tasks. Worth choosing by
+        # hand for a run that matters.
+        "gemini-3.1-flash-lite",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
         "gemini-3.5-flash-lite",
     ],
     "anthropic": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
