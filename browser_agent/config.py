@@ -149,8 +149,17 @@ GEMINI_BASE_URL = _env_str(
     "BROWSER_AGENT_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
 )
 
-# How long to wait on a hosted provider.
-HTTP_TIMEOUT_S = _env_int("BROWSER_AGENT_HTTP_TIMEOUT_S", 120)
+# How long to wait on a hosted provider. Measured on gemini-3.5-flash-lite with
+# a full-sized payload — system prompt, every tool, a 120-element snapshot —
+# over eight calls: median 19s, slowest 30s. So this is twice the worst real
+# answer, and anything past it is a hung connection rather than a slow one.
+#
+# It was 120s, which is the interesting part. A hung call is not free: it is
+# spent out of TIMEOUT_S below, so one of them used half a task's wall clock
+# while the browser sat idle, and three retries could not have fitted inside
+# the budget at all. The reason to keep this well under TIMEOUT_S is that a
+# retry has to be affordable — failing fast is what makes retrying useful.
+HTTP_TIMEOUT_S = _env_int("BROWSER_AGENT_HTTP_TIMEOUT_S", 60)
 
 # Local models, via Ollama.
 OLLAMA_HOST = _env_str("BROWSER_AGENT_OLLAMA_HOST", "http://127.0.0.1:11434")

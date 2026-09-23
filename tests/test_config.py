@@ -241,3 +241,18 @@ def test_keys_keep_their_case(env, monkeypatch, tmp_path) -> None:
         assert config.GEMINI_API_KEYS == ("AQ.MixedCaseKey",)
     finally:
         importlib.reload(config)
+
+
+def test_a_full_set_of_model_retries_fits_inside_one_task() -> None:
+    """The HTTP timeout is spent out of the task's wall clock, not beside it.
+
+    A model call that hangs is cancelled by the task budget, so a timeout close
+    to that budget means one hung call costs the whole run and the retries never
+    get to happen. It was 120s against a 240s budget: three attempts needed 366s
+    and could not fit. Measured latency is a median of 19s and a worst case of
+    30s, so there is no reason for the timeout to be near the budget at all.
+    """
+    from browser_agent import config
+
+    attempts, backoff = 3, 2 + 4  # post_with_retry's defaults
+    assert attempts * config.HTTP_TIMEOUT_S + backoff <= config.TIMEOUT_S
