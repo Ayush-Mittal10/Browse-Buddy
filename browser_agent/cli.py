@@ -72,23 +72,26 @@ class Printer:
 
 def describe_action(name: str, args: dict) -> str:
     """One short line naming what is about to happen, in the user's terms."""
+    # Element refs are the model's handle on the page, and they are deliberately
+    # absent from every line below: they change with each snapshot and mean
+    # nothing to someone watching the browser do the thing.
     ref = args.get("ref")
     if name == "navigate":
         return f"opening {args.get('url', '')}"
     if name == "click":
-        return f"clicking [{ref}]"
+        return "clicking"
     if name == "type_text":
         text = str(args.get("text") or "")
         shown = text[:30] + ("…" if len(text) > 30 else "")
-        return f'typing "{shown}" into [{ref}]'
+        return f'typing "{shown}"'
     if name == "select_option":
-        return f"selecting {args.get('option', '')!r} in [{ref}]"
+        return f"selecting {args.get('option', '')!r}"
     if name == "press_key":
         return f"pressing {args.get('key', '')}"
     if name == "scroll":
         return f"scrolling {args.get('direction', 'down')}"
     if name == "read_text":
-        return f"reading [{ref}]" if ref else "reading the page"
+        return "reading" if ref else "reading the page"
     if name == "wait":
         return f"waiting {args.get('seconds', 2)}s"
     if name == "switch_tab":

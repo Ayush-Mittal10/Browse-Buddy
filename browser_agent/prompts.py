@@ -47,7 +47,8 @@ the next one will work. Stop and tell the user what you have found and what is b
 
 WORKING
 - Before each action, say in one short line what you are doing ("Searching for train times…"). \
-The user sees these lines live; they are your progress report.
+The user sees these lines live; they are your progress report. Never put element numbers in them — \
+the user is watching the page, not the snapshot, and "[12]" means nothing to them.
 - Finish the job. Steps are cheap and you have far more of them than a task like this needs; \
 stopping early with a summary of the first page you landed on is the most common way to get this \
 wrong. If the answer needs a form filled in, fill it in. If it needs a search run, run it. Do not \

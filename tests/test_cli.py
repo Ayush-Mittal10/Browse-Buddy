@@ -118,13 +118,13 @@ def test_the_provider_reaches_the_agent(monkeypatch) -> None:
     ("name", "args", "expected"),
     [
         ("navigate", {"url": "https://example.com"}, "opening https://example.com"),
-        ("click", {"ref": 4}, "clicking [4]"),
-        ("select_option", {"ref": 2, "option": "Japan"}, "selecting 'Japan' in [2]"),
+        ("click", {"ref": 4}, "clicking"),
+        ("select_option", {"ref": 2, "option": "Japan"}, "selecting 'Japan'"),
         ("press_key", {"key": "Enter"}, "pressing Enter"),
         ("scroll", {"direction": "up"}, "scrolling up"),
         ("scroll", {}, "scrolling down"),
         ("read_text", {}, "reading the page"),
-        ("read_text", {"ref": 7}, "reading [7]"),
+        ("read_text", {"ref": 7}, "reading"),
         ("wait", {"seconds": 3}, "waiting 3s"),
         ("switch_tab", {"index": 2}, "switching to tab 2"),
         ("finish_task", {"report": "..."}, "wrapping up"),
@@ -136,7 +136,7 @@ def test_actions_are_described_in_plain_words(name: str, args: dict, expected: s
 
 
 def test_typed_text_is_shown_but_truncated() -> None:
-    assert describe_action("type_text", {"ref": 1, "text": "hello"}) == 'typing "hello" into [1]'
+    assert describe_action("type_text", {"ref": 1, "text": "hello"}) == 'typing "hello"'
     long = describe_action("type_text", {"ref": 1, "text": "x" * 80})
     assert "…" in long
     assert "x" * 80 not in long
