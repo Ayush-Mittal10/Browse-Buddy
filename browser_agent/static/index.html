@@ -221,7 +221,6 @@ function refreshButton() {
   const connected = socket && socket.readyState === WebSocket.OPEN;
   const typed = input.value.trim().length > 0;
 
-  for (const pill of suggestions.children) pill.disabled = busy;
   // While a task runs the Run button is not what anyone wants to press, so
   // Stop takes its place rather than sitting next to it greyed out.
   send.hidden = busy;

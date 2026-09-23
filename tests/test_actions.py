@@ -423,3 +423,46 @@ async def test_a_named_site_failing_is_not_someone_elses_job(session) -> None:
     # as though it came from the one that was asked for.
     assert "tell the user it is unreachable" in out
     assert "rather than quietly using a different one" in out
+
+
+# --- pacing -------------------------------------------------------------------
+
+
+async def test_going_straight_back_to_a_host_waits(session, serve) -> None:
+    import time
+
+    url = await serve(FORM)
+    await session.navigate(url)
+
+    started = time.monotonic()
+    await session.navigate(url)
+    waited = time.monotonic() - started
+
+    # Bursts at one host are the shape that gets a CAPTCHA put in front of you.
+    assert waited >= config.HOST_GAP_S
+
+
+async def test_a_different_host_is_not_made_to_wait(session, serve) -> None:
+    import time
+
+    await session.navigate(await serve(FORM))
+
+    started = time.monotonic()
+    await session.navigate("https://this-host-does-not-resolve.invalid/")
+    waited = time.monotonic() - started
+
+    # The gap is per host. Making every navigation slow would just make the
+    # agent worse for no benefit.
+    assert waited < config.HOST_GAP_S
+
+
+async def test_pacing_can_be_turned_off(session, serve, monkeypatch) -> None:
+    import time
+
+    monkeypatch.setattr(config, "HOST_GAP_S", 0)
+    url = await serve(FORM)
+    await session.navigate(url)
+
+    started = time.monotonic()
+    await session.navigate(url)
+    assert time.monotonic() - started < 1.0

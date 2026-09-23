@@ -11,25 +11,26 @@ three properties will do.
 
 Two settings, neither of them optional if strangers can reach the URL.
 
-**Limit where it can go.** An agent that will visit any address you name is an
-open proxy with a nice interface. The URL policy already refuses localhost,
-private ranges and the cloud metadata endpoint, but on a shared host that is the
-floor, not the ceiling:
+**Decide whether to limit where it can go.** Off by default, and for a demo
+that is usually right: a recruiter should be able to try whatever occurs to
+them, and a list of four domains makes the thing look like a toy.
+
+What stays on regardless is the part that matters. `is_url_allowed` refuses
+localhost, the private ranges, link-local addresses and the cloud metadata
+endpoint, along with every scheme that is not http or https. Those are what
+stop a stranger reaching inside the host; the domain list is a separate,
+narrower thing.
+
+What you accept by leaving it off is that your server's IP fetches arbitrary
+public pages on a visitor's behalf. If that becomes a problem — a complaint, a
+bill, an IP reputation you care about — this narrows it:
 
 ```
-BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org,news.ycombinator.com,bbc.com,python.org
+BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org news.ycombinator.com bbc.com python.org
 ```
 
 Commas or spaces, whichever suits the tool setting it — see the note under the
 deploy command for why that matters to `gcloud`.
-
-Those four are what the built-in suggestion pills use, and none of them fight
-automated browsers — a demo's first impression should not be a CAPTCHA. Add to
-the list rather than replacing it, or the suggestions stop working.
-
-Add `youtube.com` if you want "play me a video" to work. The agent finds the
-video and hands the link to the visitor's own browser, which is where it can
-actually be heard — see the note on sound in README.md.
 
 **Keep the Gemini key in a project with no billing account.** Cloud Run needs
 billing; the Gemini free tier needs the absence of it, and the free tier is
@@ -102,7 +103,6 @@ gcloud run deploy browse-buddy \
   --timeout 3600 \
   --min-instances 0 \
   --allow-unauthenticated \
-  --set-env-vars 'BROWSER_AGENT_ALLOWED_DOMAINS=wikipedia.org news.ycombinator.com bbc.com python.org' \
   --set-secrets 'GEMINI_API_KEY=gemini-api-key:latest'
 ```
 

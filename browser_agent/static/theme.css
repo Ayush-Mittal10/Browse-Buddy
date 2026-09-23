@@ -220,14 +220,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 #suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; }
 #suggestions:empty { display: none; }
+/* They are there for someone who has not thought of a task, so they go the
+   moment there is a conversation — whatever put the first line in it. */
+#log:not(:empty) + #suggestions { display: none; }
 .pill {
   font-size: 13px; padding: 5px 11px; border-radius: 999px;
   background: var(--bg); border: 1px solid var(--line-strong); color: var(--dim);
   cursor: pointer; text-align: left;
   transition: color .15s, border-color .15s;
 }
-.pill:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-.pill:disabled { opacity: .45; cursor: not-allowed; }
+.pill:hover { color: var(--text); border-color: var(--accent); }
 
 #composer { padding: 12px; display: flex; gap: 8px; align-items: flex-end; }
 #inputWrap { flex: 1; position: relative; border-radius: 8px; display: flex; }

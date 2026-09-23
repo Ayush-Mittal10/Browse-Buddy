@@ -29,6 +29,8 @@ import contextlib
 import contextvars
 import ipaddress
 import logging
+import random
+import time
 from urllib.parse import urlsplit
 
 from browser_agent import config
@@ -184,6 +186,7 @@ class BrowserSession:
         self.pages: list = []
         self.notes: list[str] = []  # surfaced once, in the next snapshot
         self._nav_failures: dict[str, int] = {}  # host -> times it would not load
+        self._last_hit: dict[str, float] = {}    # host -> when we were last there
         self.last_screenshot: tuple[str, str] | None = None  # (base64, mime)
         self._pw = None
         self._browser = None
@@ -429,12 +432,29 @@ class BrowserSession:
 
     # -- actions (each returns a string for the model) -----------------------
 
+    async def _pace(self, host: str) -> None:
+        """Wait, if we were on this host a moment ago.
+
+        Nothing here is trying to look human. It is about not arriving in
+        bursts: the slow part of a run is the model, so in normal operation
+        this waits for nothing at all, and it only bites when the agent starts
+        hammering one host — which is exactly when it should.
+        """
+        gap = config.HOST_GAP_S
+        if gap <= 0 or not host:
+            return
+        since = time.monotonic() - self._last_hit.get(host, 0.0)
+        if since < gap:
+            await asyncio.sleep(gap - since + random.uniform(0, gap / 3))
+        self._last_hit[host] = time.monotonic()
+
     async def navigate(self, url: str) -> str:
         url = _normalise_url(url)
         ok, why = is_url_allowed(url)
         if not ok:
             return f"Cannot open {url!r}: {why}"
         page = self._require_page()
+        await self._pace((urlsplit(url).hostname or "").lower())
         try:
             resp = await page.goto(url, wait_until="domcontentloaded")
         except Exception as e:

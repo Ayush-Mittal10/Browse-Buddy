@@ -188,6 +188,14 @@ NAV_TIMEOUT_MS = _env_int("BROWSER_AGENT_NAV_TIMEOUT_MS", 25_000)
 # element reference and the fix is to take a fresh look at the page.
 ACTION_TIMEOUT_MS = _env_int("BROWSER_AGENT_ACTION_TIMEOUT_MS", 8_000)
 
+# Least time between two hits on the same host. Not because the agent is fast
+# — a model call between every action already makes it slower than any scraper
+# — but because when it goes wrong it goes wrong in bursts: a run that cannot
+# reach a site will try it, search for it, and try it again within a few
+# seconds, which is the shape that gets a CAPTCHA put in front of you. A little
+# jitter on top, since a perfectly regular gap is itself a signature.
+HOST_GAP_S = _env_int("BROWSER_AGENT_HOST_GAP_MS", 1500) / 1000
+
 # Breathing room after an action so single-page apps finish painting before we
 # read the DOM back.
 SETTLE_MS = _env_int("BROWSER_AGENT_SETTLE_MS", 700)
