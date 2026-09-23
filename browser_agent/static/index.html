@@ -103,15 +103,56 @@ function escapeHtml(text) {
   return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+function anchor(href, label) {
+  return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+// Trailing punctuation usually belongs to the sentence, not the address. A
+// closing bracket is the exception: it is part of the URL when the URL opened
+// one itself, which is how half of Wikipedia's links are written.
+function splitTrailing(url) {
+  let end = url.length;
+  while (end > 0) {
+    const c = url[end - 1];
+    if (c === ')' ) {
+      const opens = (url.slice(0, end).match(/\(/g) || []).length;
+      const closes = (url.slice(0, end).match(/\)/g) || []).length;
+      if (closes <= opens) break;
+    } else if (!'.,;:!?]}\'"'.includes(c)) {
+      break;
+    }
+    end -= 1;
+  }
+  return [url.slice(0, end), url.slice(end)];
+}
+
 function inline(text) {
   let out = escapeHtml(text);
-  out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Finished fragments are parked behind a placeholder so that later passes
+  // cannot reach inside them. Without this, a bare-URL pass would happily
+  // rewrite the href of a link the markdown pass had just built.
+  const held = [];
+  const hold = (html) => `\u0000${held.push(html) - 1}\u0000`;
+
+  out = out.replace(/`([^`]+)`/g, (_, code) => hold(`<code>${code}</code>`));
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_, label, href) => hold(anchor(href, label)));
+
+  // Bare URLs, which is how a model writes most of them. The escaping has
+  // already happened, so a < in the original is now &lt; and would otherwise
+  // be swallowed into the middle of an address; the lookahead stops at the
+  // entities that were delimiters. &amp; is deliberately not among them, since
+  // that is just a query string.
+  out = out.replace(/https?:\/\/(?:(?!&(?:lt|gt|quot);)[^\s<>"])+/g, (url) => {
+    const [link, tail] = splitTrailing(url);
+    return link ? hold(anchor(link, link)) + tail : url;
+  });
+
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
-  // Only http(s) links become anchors; anything else stays as plain text.
-  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return out;
+
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => held[i]);
 }
 
 function markdown(text) {
