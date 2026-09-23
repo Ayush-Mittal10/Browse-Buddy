@@ -7,6 +7,7 @@ stricter subset than anyone else's.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -487,25 +488,34 @@ def test_the_default_model_is_somewhere_in_the_suggestions() -> None:
 # --- more than one key --------------------------------------------------------
 
 
-class _Response:
-    def __init__(self, code: int):
-        self.status_code = code
-        self.headers: dict = {}
-
-    def json(self) -> dict:
-        return {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}
-
-
 class _Client:
-    """Answers with scripted status codes and records which key was used."""
+    """Answers with scripted status codes and records which key was used.
+
+    A stream rather than a post, because that is what the Gemini backend calls
+    now — the key rotation has to keep working over the streamed transport.
+    """
 
     def __init__(self, *codes: int):
         self.codes = list(codes)
         self.keys_used: list[str] = []
 
-    async def post(self, url, json=None, headers=None):
+    def stream(self, method, url, json=None, headers=None, **kwargs):
         self.keys_used.append(headers["x-goog-api-key"])
-        return _Response(self.codes.pop(0) if self.codes else 200)
+        code = self.codes.pop(0) if self.codes else 200
+        ok = sse({"candidates": [{"content": {"parts": [{"text": "hi"}]}}]})
+        lines = ok if code < 400 else []
+        return _StreamCtx(FakeStream(code, lines, b'{"error": {"message": "no"}}'))
+
+
+class _StreamCtx:
+    def __init__(self, stream):
+        self._stream = stream
+
+    async def __aenter__(self):
+        return self._stream
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 def _with_keys(*keys: str, codes: tuple[int, ...] = ()) -> GeminiLLM:
@@ -559,7 +569,7 @@ def test_a_caller_supplied_key_is_used_alone() -> None:
     assert GeminiLLM(api_key="theirs").keys == ["theirs"]
 
 
-async def test_a_timeout_is_explained_rather_than_named() -> None:
+async def test_a_stalled_connection_is_explained_rather_than_named() -> None:
     # httpx raises a timeout carrying an empty message, so the obvious rendering
     # reaches the user as "Could not reach Gemini: ReadTimeout: " — a class name
     # and a colon with nothing after it. This is what a real run showed.
@@ -568,8 +578,20 @@ async def test_a_timeout_is_explained_rather_than_named() -> None:
     message = unreachable("Gemini", httpx.ReadTimeout(""))
 
     assert "ReadTimeout" not in message
-    assert "did not answer" in message
+    assert "stopped sending" in message
+    assert str(config.HTTP_STREAM_GAP_S) in message
+
+
+async def test_a_stream_that_ran_long_is_a_different_story() -> None:
+    # Going quiet and taking too long overall are different failures, and which
+    # one it was is the part worth telling someone.
+    from browser_agent.llm import unreachable
+
+    message = unreachable("Gemini", TimeoutError())
+
+    assert "still answering" in message
     assert str(config.HTTP_TIMEOUT_S) in message
+    assert message != unreachable("Gemini", httpx.ReadTimeout(""))
 
 
 async def test_other_connection_failures_keep_their_own_words() -> None:
@@ -578,3 +600,222 @@ async def test_other_connection_failures_keep_their_own_words() -> None:
     assert "refused" in unreachable("OpenAI", httpx.ConnectError("refused"))
     # An exception with nothing to say still names itself rather than trailing off.
     assert "ConnectError" in unreachable("OpenAI", httpx.ConnectError(""))
+
+
+# --- streaming ----------------------------------------------------------------
+#
+# The plain generateContent endpoint sends nothing until the whole answer
+# exists: measured, the first byte and the last byte of a ~900 byte reply
+# arrive in the same instant, five times out of five. So its "read timeout" was
+# really a cap on how long the model was allowed to think, and a slow answer
+# looked exactly like a dead connection. Streamed, the first chunk lands in
+# 1.6-6.7s and the rest follow ~100ms apart.
+
+
+def sse(*events) -> list[str]:
+    """The wire as Gemini writes it: `data: {json}` lines separated by blanks."""
+    lines = []
+    for event in events:
+        lines += [f"data: {json.dumps(event)}", ""]
+    return lines
+
+
+class FakeStream:
+    def __init__(self, status_code: int, lines: list[str], body: bytes = b""):
+        self.status_code = status_code
+        self._lines = lines
+        self._body = body
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self):
+        return self._body
+
+
+class FakeStreamClient:
+    """Answers each stream() with the next scripted outcome; an exception is
+    raised instead, which is how a stalled connection arrives."""
+
+    def __init__(self, *outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def stream(self, method, url, **kwargs):
+        self.calls += 1
+        outcome = self.outcomes.pop(0) if self.outcomes else FakeStream(200, [])
+
+        class _Ctx:
+            async def __aenter__(self):
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                return outcome
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Ctx()
+
+
+async def stream(client, **kw):
+    from browser_agent.llm import stream_with_retry
+
+    return await stream_with_retry(
+        client, "https://x/y", json={}, headers={}, gap_s=1, total_s=5, delay=0, **kw
+    )
+
+
+async def test_the_events_of_a_stream_are_collected() -> None:
+    client = FakeStreamClient(FakeStream(200, sse({"a": 1}, {"b": 2})))
+    result = await stream(client)
+
+    assert result.status_code == 200
+    assert result.events == [{"a": 1}, {"b": 2}]
+
+
+async def test_a_stalled_stream_is_retried() -> None:
+    # The failure this whole change is about: the connection goes quiet.
+    client = FakeStreamClient(httpx.ReadTimeout("quiet"), FakeStream(200, sse({"a": 1})))
+    result = await stream(client)
+
+    assert result.events == [{"a": 1}]
+    assert client.calls == 2
+
+
+async def test_a_stream_that_never_starts_is_raised() -> None:
+    client = FakeStreamClient(*[httpx.ReadTimeout("quiet")] * 3)
+    with pytest.raises(httpx.ReadTimeout):
+        await stream(client)
+    assert client.calls == 3
+
+
+async def test_an_error_body_is_read_rather_than_streamed() -> None:
+    # Errors are small and come back whole, and the caller needs the text to
+    # say what was wrong rather than just the number.
+    client = FakeStreamClient(FakeStream(400, [], b'{"error": {"message": "bad key"}}'))
+    result = await stream(client)
+
+    assert result.status_code == 400
+    assert result.json()["error"]["message"] == "bad key"
+
+
+async def test_a_transient_status_is_retried_on_a_stream_too() -> None:
+    client = FakeStreamClient(FakeStream(503, []), FakeStream(200, sse({"a": 1})))
+    result = await stream(client)
+
+    assert result.status_code == 200
+    assert client.calls == 2
+
+
+async def test_every_event_is_offered_as_it_arrives() -> None:
+    # What lets a caller show progress instead of a frozen last action.
+    seen = []
+    client = FakeStreamClient(FakeStream(200, sse({"a": 1}, {"b": 2})))
+    await stream(client, on_event=seen.append)
+
+    assert seen == [{"a": 1}, {"b": 2}]
+
+
+async def test_a_stream_that_never_finishes_is_cut_off() -> None:
+    from browser_agent.llm import stream_with_retry
+
+    class Endless:
+        status_code = 200
+
+        async def aiter_lines(self):
+            while True:
+                await asyncio.sleep(0.01)
+                yield "data: {}"
+
+        async def aread(self):
+            return b""
+
+    client = FakeStreamClient(Endless(), Endless(), Endless())
+    with pytest.raises(TimeoutError):
+        await stream_with_retry(
+            client, "https://x/y", json={}, headers={},
+            gap_s=5, total_s=0.05, delay=0,
+        )
+
+
+# --- rebuilding one turn from its events --------------------------------------
+
+
+def test_text_split_across_events_is_joined() -> None:
+    from browser_agent.gemini import _collect
+
+    parts, _ = _collect(
+        sse_events := [
+            {"candidates": [{"content": {"parts": [{"text": "Trains are"}]}}]},
+            {"candidates": [{"content": {"parts": [{"text": " fast."}]}}]},
+        ]
+    )
+    assert sse_events  # the shape really seen on the wire
+    assert parts == [{"text": "Trains are fast."}]
+
+
+def test_a_function_call_keeps_its_thought_signature() -> None:
+    # Replaying a functionCall without its signature is a 400 on the next
+    # request, so this is the difference between a working conversation and a
+    # dead one. It must not be merged into neighbouring text either.
+    from browser_agent.gemini import _collect
+
+    parts, _ = _collect(
+        [
+            {"candidates": [{"content": {"parts": [{"text": "Clicking."}]}}]},
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "functionCall": {"name": "click", "args": {"ref": 1}},
+                                    "thoughtSignature": "SIG",
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        ]
+    )
+
+    assert parts[0] == {"text": "Clicking."}
+    assert parts[1]["thoughtSignature"] == "SIG"
+    assert parts[1]["functionCall"]["args"] == {"ref": 1}
+
+
+def test_the_empty_trailing_part_is_dropped_but_a_signed_one_is_not() -> None:
+    # The last event carries an empty text part to hang finishReason on. A part
+    # that is empty *and* signed is a different thing: dropping it loses the
+    # signature the next request has to replay.
+    from browser_agent.gemini import _collect
+
+    parts, _ = _collect(
+        [
+            {"candidates": [{"content": {"parts": [{"text": "Done."}]}}]},
+            {"candidates": [{"content": {"parts": [{"text": ""}]}, "finishReason": "STOP"}]},
+        ]
+    )
+    assert parts == [{"text": "Done."}]
+
+    signed, _ = _collect(
+        [{"candidates": [{"content": {"parts": [{"text": "", "thoughtSignature": "S"}]}}]}]
+    )
+    assert signed == [{"text": "", "thoughtSignature": "S"}]
+
+
+def test_a_refused_prompt_is_noticed_across_events() -> None:
+    from browser_agent.gemini import _collect
+
+    _, blocked = _collect([{"promptFeedback": {"blockReason": "SAFETY"}}])
+    assert blocked == "SAFETY"
+
+
+def test_events_without_a_candidate_are_skipped() -> None:
+    from browser_agent.gemini import _collect
+
+    parts, blocked = _collect([{"usageMetadata": {"totalTokenCount": 10}}, {"candidates": []}])
+    assert parts == []
+    assert blocked == ""

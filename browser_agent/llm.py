@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from json import loads as _json_loads
 from typing import Any, Protocol
 
 import httpx
@@ -67,6 +68,100 @@ async def post_with_retry(client, url, *, json, headers, attempts: int = 3, dela
     return response
 
 
+@dataclass
+class Streamed:
+    """A server-sent-event response, collected.
+
+    Shaped like the bits of an httpx response the callers already use, so the
+    error paths do not have to care which transport produced them.
+    """
+
+    status_code: int
+    events: list[dict] = field(default_factory=list)
+    text: str = ""  # the body, read only when the status says it is an error
+
+    def json(self):
+        return _json_loads(self.text)
+
+
+async def stream_with_retry(
+    client,
+    url,
+    *,
+    json,
+    headers,
+    gap_s: float,
+    total_s: float,
+    on_event=None,
+    attempts: int = 3,
+    delay: float = 2.0,
+) -> Streamed:
+    """POST expecting SSE, collecting the events, with the same retry policy.
+
+    Streaming is what makes the read timeout mean what it says. On the
+    non-streaming endpoint the server computes the whole answer before sending
+    a byte — measured, first byte and last byte arrive in the same instant — so
+    a "read timeout" was really a cap on how long the model was allowed to
+    think, and a slow answer was indistinguishable from a dead connection.
+    Here `gap_s` bounds the silence *between* chunks and `total_s` bounds the
+    whole response, which are two different failures and worth telling apart.
+
+    A failure part-way through discards what arrived and re-sends: the reply is
+    only useful whole, and half a tool call is not worth keeping.
+    """
+    host = url.split("/")[2]
+    for attempt in range(attempts):
+        last = attempt == attempts - 1
+        try:
+            result = await _stream_once(
+                client, url, json=json, headers=headers, gap_s=gap_s,
+                total_s=total_s, on_event=on_event,
+            )
+        except (httpx.TransportError, TimeoutError) as e:
+            if last:
+                raise
+            wait = delay * (2**attempt)
+            logger.info("%s from %s; retrying in %.0fs", type(e).__name__, host, wait)
+            await asyncio.sleep(wait)
+            continue
+        if result.status_code not in RETRYABLE or last:
+            return result
+        wait = delay * (2**attempt)
+        logger.info("HTTP %s from %s; retrying in %.0fs", result.status_code, host, wait)
+        await asyncio.sleep(wait)
+    return result
+
+
+async def _stream_once(client, url, *, json, headers, gap_s, total_s, on_event) -> Streamed:
+    """One attempt. `gap_s` is httpx's read timeout, which on a stream is the
+    wait for the *next* chunk; `total_s` bounds the response as a whole."""
+    timeout = httpx.Timeout(gap_s, connect=min(gap_s, 15.0))
+    async with asyncio.timeout(total_s):
+        async with client.stream(
+            "POST", url, json=json, headers=headers, timeout=timeout
+        ) as response:
+            if response.status_code >= 400:
+                # Errors are small and are not streamed; read the body so the
+                # caller can say what was actually wrong.
+                body = await response.aread()
+                return Streamed(response.status_code, [], body.decode("utf-8", "replace"))
+            events = []
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    event = _json_loads(payload)
+                except ValueError:
+                    continue
+                events.append(event)
+                if on_event is not None:
+                    on_event(event)
+            return Streamed(response.status_code, events)
+
+
 def unreachable(provider: str, e: BaseException) -> str:
     """Why a request never got an answer, in words rather than a class name.
 
@@ -74,11 +169,19 @@ def unreachable(provider: str, e: BaseException) -> str:
     out as "ReadTimeout: " and tells the reader nothing about which half of the
     request was slow or what they might do about it.
     """
+    # Two different stalls, and which one it was is the useful part. httpx's
+    # timeout means the connection went quiet; asyncio's means it kept dribbling
+    # but never finished.
     if isinstance(e, httpx.TimeoutException):
         return (
-            f"{provider} did not answer within {config.HTTP_TIMEOUT_S}s, and did not answer "
-            "the retries either. It is usually load on the provider rather than anything "
-            "about the request; a smaller model normally answers when a larger one will not."
+            f"{provider} stopped sending for {config.HTTP_STREAM_GAP_S}s, and did the same "
+            "on the retries. It is usually load on the provider rather than anything about "
+            "the request; a smaller model normally answers when a larger one will not."
+        )
+    if isinstance(e, TimeoutError):
+        return (
+            f"{provider} was still answering after {config.HTTP_TIMEOUT_S}s and had to be "
+            "cut off, on every attempt. A shorter task or a smaller model is the way out."
         )
     detail = str(e) or type(e).__name__
     return f"Could not reach {provider}: {detail}"

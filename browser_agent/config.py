@@ -161,6 +161,14 @@ GEMINI_BASE_URL = _env_str(
 # retry has to be affordable — failing fast is what makes retrying useful.
 HTTP_TIMEOUT_S = _env_int("BROWSER_AGENT_HTTP_TIMEOUT_S", 60)
 
+# On a streamed reply the read timeout stops being a cap on the model's thinking
+# and becomes what it sounds like: how long the connection may go quiet between
+# chunks. Measured on gemini-3.5-flash-lite, the first chunk lands 1.6-6.7s in
+# and the rest follow about 100ms apart, so twenty seconds of nothing is a dead
+# connection rather than a slow one. HTTP_TIMEOUT_S still bounds the whole
+# response, because a stream that drips forever is its own kind of stuck.
+HTTP_STREAM_GAP_S = _env_int("BROWSER_AGENT_HTTP_STREAM_GAP_S", 20)
+
 # Local models, via Ollama.
 OLLAMA_HOST = _env_str("BROWSER_AGENT_OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = _env_str("BROWSER_AGENT_OLLAMA_MODEL", "qwen3:8b")

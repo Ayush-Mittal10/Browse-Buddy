@@ -17,7 +17,7 @@ import logging
 import uuid
 
 from browser_agent import config
-from browser_agent.llm import LLMError, Reply, ToolCall, post_with_retry, unreachable
+from browser_agent.llm import LLMError, Reply, ToolCall, stream_with_retry, unreachable
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,34 @@ _BY_CONTENTION = (
     "gemini-3.5-flash",
     "gemini-3.8-flash",
 )
+
+
+def _collect(events: list[dict]) -> tuple[list[dict], str]:
+    """One turn's parts, rebuilt from the events they arrived in.
+
+    Text is split across events and has to be joined back up; a functionCall
+    arrives whole, carrying the thoughtSignature that must be replayed with it
+    on the next request. So only *pure* text parts merge into each other — a
+    part with a signature attached is not a text fragment and has to survive as
+    itself, which is the difference between a working conversation and a 400.
+    """
+    parts: list[dict] = []
+    blocked = ""
+    for event in events:
+        blocked = blocked or (event.get("promptFeedback") or {}).get("blockReason") or ""
+        candidates = event.get("candidates") or []
+        if not candidates:
+            continue
+        for part in (candidates[0].get("content") or {}).get("parts") or []:
+            plain = set(part) == {"text"}
+            # The last event carries an empty text part to hang finishReason on.
+            if plain and not part["text"]:
+                continue
+            if plain and parts and set(parts[-1]) == {"text"}:
+                parts[-1] = {"text": parts[-1]["text"] + part["text"]}
+            else:
+                parts.append(part)
+    return parts, blocked
 
 
 def _try_instead(current: str) -> str:
@@ -164,14 +192,23 @@ class GeminiLLM:
             "tools": [{"functionDeclarations": [_declaration(t) for t in tools]}],
             "generationConfig": {"temperature": 0, "maxOutputTokens": config.MAX_TOKENS},
         }
-        url = f"{self.base_url}/models/{self.name}:generateContent"
-        # Each key gets one go. post_with_retry has already waited out the
+        # Streamed, because the plain endpoint sends nothing at all until the
+        # whole answer exists — measured, first byte and last byte in the same
+        # instant — which made every slow reply look exactly like a dead
+        # connection and cost the run a 60s wait to find out otherwise.
+        url = f"{self.base_url}/models/{self.name}:streamGenerateContent?alt=sse"
+        # Each key gets one go. stream_with_retry has already waited out the
         # transient case by the time one answers 429, so a key that still says
         # no here is out of quota rather than momentarily busy.
         for attempt in range(len(self.keys)):
             try:
-                response = await post_with_retry(
-                    self._http(), url, json=body, headers={"x-goog-api-key": self.api_key}
+                response = await stream_with_retry(
+                    self._http(),
+                    url,
+                    json=body,
+                    headers={"x-goog-api-key": self.api_key},
+                    gap_s=config.HTTP_STREAM_GAP_S,
+                    total_s=config.HTTP_TIMEOUT_S,
                 )
             except Exception as e:
                 raise LLMError(unreachable("Gemini", e)) from e
@@ -200,20 +237,12 @@ class GeminiLLM:
         if response.status_code >= 400:
             raise LLMError(f"Gemini returned {response.status_code}: {_detail(response)}")
 
-        try:
-            payload = response.json()
-        except ValueError as e:
-            raise LLMError(f"Gemini sent a reply we could not read: {e}") from e
-
-        candidates = payload.get("candidates") or []
-        if not candidates:
-            # A blocked prompt comes back as a 200 with no candidate at all.
-            blocked = (payload.get("promptFeedback") or {}).get("blockReason")
-            if blocked:
-                raise LLMError(f"Gemini declined the request ({blocked}).")
+        parts, blocked = _collect(response.events)
+        if blocked:
+            raise LLMError(f"Gemini declined the request ({blocked}).")
+        if not parts:
             return Reply()
 
-        parts = (candidates[0].get("content") or {}).get("parts") or []
         text, calls = [], []
         for part in parts:
             if "text" in part and part["text"]:
