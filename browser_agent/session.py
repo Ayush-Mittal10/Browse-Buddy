@@ -166,6 +166,64 @@ def _short_error(e: BaseException, limit: int = 240) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+# ── bot checks ───────────────────────────────────────────────────────────────
+
+# Paths a site sends you to when it has decided you are a robot.
+_BLOCK_PATHS = ("/sorry/", "/recaptcha/", "/challenge", "/cdn-cgi/challenge")
+
+# Wording those pages use. Only trusted on a short page: an article *about*
+# CAPTCHAs contains every one of these and is not a bot check.
+_BLOCK_PHRASES = (
+    "unusual traffic",
+    "not a robot",
+    "verify you are human",
+    "are you a robot",
+    "systems have detected",
+    "enable javascript and cookies to continue",
+    "checking your browser",
+)
+
+_BLOCK_TEXT_LIMIT = 2500
+
+
+def looks_blocked(url: str, page_text: str) -> bool:
+    """Whether this page is a bot check rather than the page that was wanted.
+
+    Deliberately conservative. Calling a real page a block would send the agent
+    away from somewhere it could have used, which is worse than missing one.
+    """
+    lowered_url = (url or "").lower()
+    if any(path in lowered_url for path in _BLOCK_PATHS):
+        return True
+    text = (page_text or "").lower()
+    if len(text) > _BLOCK_TEXT_LIMIT:
+        return False
+    return any(phrase in text for phrase in _BLOCK_PHRASES)
+
+
+def blocked_advice(url: str) -> str:
+    """What to do about it, in terms the model can act on."""
+    host = (urlsplit(url).hostname or "").lower()
+    advice = (
+        "[This is a bot check, not the page you wanted. The site has decided this browser "
+        "is automated and will keep showing this — reloading, waiting or trying another "
+        "URL on the same site will not change it. Do not attempt to solve it."
+    )
+    if "google." in host:
+        advice += (
+            " Google blocks automated searching entirely; its home page loads but every "
+            "search ends here. Use https://duckduckgo.com/html/?q=your+terms instead, "
+            "which works."
+        )
+    else:
+        advice += (
+            " Go to a different site. For searching, https://duckduckgo.com/html/?q=your+terms "
+            "works."
+        )
+    return advice + " If the task needs this particular site, tell the user it is blocking "\
+        "automated access and let them decide.]"
+
+
 # ── Session ──────────────────────────────────────────────────────────────────
 
 
@@ -187,6 +245,7 @@ class BrowserSession:
         self.notes: list[str] = []  # surfaced once, in the next snapshot
         self._nav_failures: dict[str, int] = {}  # host -> times it would not load
         self._last_hit: dict[str, float] = {}    # host -> when we were last there
+        self.blocked = False                     # the current page is a bot check
         self.last_screenshot: tuple[str, str] | None = None  # (base64, mime)
         self._pw = None
         self._browser = None
@@ -384,6 +443,13 @@ class BrowserSession:
             return f"Could not read the page: {_short_error(e)}. Try wait, then get_page."
         tabs = await self._tab_titles() if len(self.pages) > 1 else None
         notes, self.notes = self.notes, []
+        # A bot check reads as an ordinary short page, so the model will happily
+        # try to interact with it unless it is told what it is looking at.
+        page_url = data.get("url") or ""
+        self.blocked = looks_blocked(page_url, data.get("text") or "")
+        if self.blocked:
+            logger.info("Bot check at %s", page_url)
+            notes = [*notes, blocked_advice(page_url)]
         return format_snapshot(
             data,
             tabs=tabs,

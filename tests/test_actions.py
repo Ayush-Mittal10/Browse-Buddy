@@ -466,3 +466,21 @@ async def test_pacing_can_be_turned_off(session, serve, monkeypatch) -> None:
     started = time.monotonic()
     await session.navigate(url)
     assert time.monotonic() - started < 1.0
+
+
+async def test_a_bot_check_is_flagged_in_the_snapshot(session, serve) -> None:
+    url = await serve(
+        "<title>Sorry</title><p>Our systems have detected unusual traffic "
+        "from your computer network.</p>"
+    )
+    out = await session.navigate(url)
+
+    assert session.blocked is True
+    # It reads as an ordinary short page, so the model has to be told.
+    assert "bot check" in out
+    assert "Do not attempt to solve it" in out
+
+
+async def test_an_ordinary_page_is_not_flagged(session, serve) -> None:
+    await session.navigate(await serve(FORM))
+    assert session.blocked is False
