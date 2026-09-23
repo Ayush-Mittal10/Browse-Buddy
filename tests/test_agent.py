@@ -77,7 +77,7 @@ def agent_with(session, *replies, **kwargs) -> BrowserAgent:
 # --- how a run ends -----------------------------------------------------------
 
 
-async def test_a_finished_task_reports_and_closes_the_browser(session, serve) -> None:
+async def test_a_finished_task_reports_but_keeps_the_browser(session, serve) -> None:
     url = await serve(PAGE)
     agent = agent_with(
         session,
@@ -90,7 +90,8 @@ async def test_a_finished_task_reports_and_closes_the_browser(session, serve) ->
     assert outcome.state == FINISHED
     assert outcome.text == "The cart is empty."
     assert outcome.url == url
-    assert agent._session is None
+    # The browser stays: a finished task is not a finished conversation.
+    assert agent._session is session
 
 
 async def test_text_without_a_tool_call_waits_for_the_user(session, serve) -> None:
@@ -476,3 +477,60 @@ async def test_the_same_tool_with_different_arguments_is_not_repetition(session,
 
     texts = [r.text for m in agent.messages if m["role"] == "tool" for r in m["results"]]
     assert not any("exact action" in t for t in texts)
+
+
+# --- what survives a finished task --------------------------------------------
+
+
+async def test_the_conversation_outlives_a_finished_task(session, serve) -> None:
+    await serve(PAGE)
+    agent = agent_with(
+        session,
+        Reply("", [call("finish_task", {"report": "The cart is empty."})]),
+        Reply("There were two items yesterday."),
+    )
+
+    await agent.run("check the cart")
+    before = len(agent.messages)
+    await agent.run("what about yesterday?")
+
+    # The follow-up is asked with everything that came before it, or the user
+    # is repeating themselves to something that just answered them.
+    sent = agent.llm.sent[-1]
+    assert len(sent) > before
+    assert any("check the cart" in (m.get("text") or "") for m in sent)
+    assert agent.turns == 2
+
+
+async def test_a_follow_up_after_finishing_uses_the_same_browser(session, serve) -> None:
+    url = await serve(PAGE)
+    agent = agent_with(
+        session,
+        Reply("", [call("finish_task", {"report": "done"})]),
+        Reply("still here"),
+    )
+
+    await agent.run("look at the shop", start_url=url)
+    await agent.run("and the cart?")
+
+    assert agent._session is session
+    # The page is still the one the task ended on, so the model is told so.
+    assert "browser is where you left it" in agent.llm.sent[-1][-1]["text"]
+
+
+async def test_a_browser_that_went_away_is_admitted_to(session, serve) -> None:
+    url = await serve(PAGE)
+    agent = agent_with(session, Reply("ok"), Reply("ok again"))
+    await agent.run("look at the shop", start_url=url)
+
+    # Simulate the browser dying between turns.
+    agent._session = None
+    try:
+        await agent.run("carry on")
+        text = agent.llm.sent[-1][-1]["text"]
+        # Telling the model the page is where it left it would be a lie, and it
+        # would act on elements that no longer exist.
+        assert "reopened on a blank page" in text
+        assert "browser is where you left it" not in text
+    finally:
+        await agent.close()

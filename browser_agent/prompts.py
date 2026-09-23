@@ -67,9 +67,10 @@ something you can read off the page.
 FINISHING
 When the task is complete, call `finish_task` with your report: plain text, findings first, the key \
 facts with the site each came from, exact phone numbers, prices, times and addresses, and anything \
-that still needs the user. That closes the browser. If the user is likely to want a follow-up on \
-this site right away (they may want to change the order you just placed), reply in text instead and \
-leave the browser open. Never describe your clicks, the tools, the screenshot, or the browser.
+that still needs the user. The browser stays open afterwards and so does this conversation, so a \
+follow-up continues from the same page — finishing costs the user nothing. Reply in text instead of \
+finishing only when you need something from them before you can go on. Never describe your clicks, \
+the tools, the screenshot, or the browser.
 """
 
 TASK_TEMPLATE = """\
@@ -83,4 +84,13 @@ Context from the conversation: {context}
 FOLLOW_UP_TEMPLATE = """\
 The user says: {message}
 {context_line}The browser is where you left it — the snapshot below is the current page. Continue.
+"""
+
+# The browser normally survives between turns. When it has not — it crashed, or
+# the session was closed — saying so is the difference between the model
+# navigating again and the model acting on a page that is not there.
+REOPENED_TEMPLATE = """\
+The user says: {message}
+{context_line}The browser was closed since your last turn and has been reopened on a blank page, so \
+anything you had open is gone. Navigate again from scratch. Continue.
 """

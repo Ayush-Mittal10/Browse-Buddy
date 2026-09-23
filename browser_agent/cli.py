@@ -186,7 +186,7 @@ async def interactive(agent: BrowserAgent, out: Printer, first: str = "", url: s
         message, start_url = "", ""
         out.write()
         if state == FINISHED:
-            out.note("The browser has closed. Type another task, or \"quit\".")
+            out.note("Ask a follow-up, or type another task.")
 
 
 async def _run(args: argparse.Namespace) -> int:

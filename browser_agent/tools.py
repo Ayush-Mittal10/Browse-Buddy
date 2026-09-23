@@ -213,9 +213,10 @@ TOOLS: list[dict] = [
             "Call this when the task is complete and nothing more is expected on this "
             "site. `report` is your final message to the user: plain text, findings "
             "first, the key facts with the site each came from, exact phone numbers, "
-            "prices, times and addresses, and anything that still needs them. This "
-            "closes the browser. To ask the user something, or to leave the browser open "
-            "for a likely follow-up, reply in text instead of calling this."
+            "prices, times and addresses, and anything that still needs them. The browser "
+            "stays open and the conversation continues, so a follow-up costs nothing. To "
+            "ask the user something before you can go on, reply in text instead of "
+            "calling this."
         ),
         "input_schema": {
             "type": "object",
@@ -230,7 +231,7 @@ TOOLS: list[dict] = [
 
 TOOL_NAMES = frozenset(tool["name"] for tool in TOOLS)
 
-FINISHED_NOTE = "Task marked finished. The browser will close after this turn."
+FINISHED_NOTE = "Task marked finished."
 
 
 async def _finish_task(session: BrowserSession, report: str) -> str:

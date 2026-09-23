@@ -181,14 +181,30 @@ def test_a_frame_arrives_as_base64(web) -> None:
     assert frame["data"] == "QkFTRTY0"
 
 
-def test_a_follow_up_continues_the_same_browser(web) -> None:
+def test_a_follow_up_continues_the_same_agent(web) -> None:
     with web.websocket_connect("/ws") as socket:
         socket.send_json({"message": "order a shirt"})
-        # A waiting outcome keeps the browser, so the next message continues it.
+        drain(socket, until="report")
+        socket.send_json({"message": "what about yesterday?"})
         drain(socket, until="report")
 
-    # One agent built, because the first task finished and released it.
+    # One agent, so one conversation. Building a second would hand the visitor
+    # an assistant with no memory of what it had just told them.
     assert len(FakeAgent.built) == 1
+    assert FakeAgent.built[0] is not None
+
+
+def test_a_finished_task_does_not_throw_the_conversation_away(web) -> None:
+    built = []
+
+    with web.websocket_connect("/ws") as socket:
+        socket.send_json({"message": "first task"})
+        drain(socket, until="report")   # the fake finishes every task
+        socket.send_json({"message": "follow-up"})
+        drain(socket, until="report")
+        built = list(FakeAgent.built)
+
+    assert len(built) == 1, "a finished task must not discard the agent"
 
 
 def test_an_empty_message_is_ignored(web) -> None:

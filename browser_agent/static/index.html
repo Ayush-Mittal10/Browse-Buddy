@@ -462,7 +462,7 @@ function connect() {
         // narration and the report are the same words. Show them once.
         if (message.text && message.text !== lastAgentText) line('agent', message.text);
         if (message.state === 'in_progress') line('note', 'Out of budget — say "continue" to carry on.');
-        if (message.state === 'finished') line('note', 'The browser closed. Ask something else to start again.');
+        if (message.state === 'finished') line('note', 'Ask a follow-up, or something else entirely.');
         break;
     }
   };

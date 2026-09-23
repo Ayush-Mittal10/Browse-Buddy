@@ -31,7 +31,12 @@ from zoneinfo import ZoneInfo
 
 from browser_agent import config, llm
 from browser_agent.llm import LLM, LLMError, ToolResult
-from browser_agent.prompts import FOLLOW_UP_TEMPLATE, SYSTEM_PROMPT, TASK_TEMPLATE
+from browser_agent.prompts import (
+    FOLLOW_UP_TEMPLATE,
+    REOPENED_TEMPLATE,
+    SYSTEM_PROMPT,
+    TASK_TEMPLATE,
+)
 from browser_agent.session import BrowserSession, BrowserUnavailable, use_session
 from browser_agent.tools import TOOLS, execute_tool
 
@@ -46,8 +51,11 @@ __all__ = [
     "BrowserUnavailable",
 ]
 
-# How a run ended. FINISHED closes the browser; the other two leave it open
-# with its memory, and the next run continues from there.
+# How a run ended. All three leave the browser open and the conversation
+# intact; what differs is whether anything is still owed. The browser closes
+# when the agent does, not when a task does — somebody who just got an answer
+# very often has a follow-up, and making them start over from a blank page with
+# no memory of the exchange is the wrong end of the trade.
 FINISHED = "finished"        # finish_task was called: `text` is the report
 WAITING = "waiting"          # the model replied in text (a question, a check-in)
 IN_PROGRESS = "in_progress"  # the run's budget ran out mid-task
@@ -273,8 +281,9 @@ class BrowserAgent:
         """Run one turn.
 
         ``message`` is the task on the first call and the user's reply or next
-        instruction after that. The outcome says whether the browser closed
-        (FINISHED) or is still open with its memory (WAITING / IN_PROGRESS).
+        instruction after that. The outcome says what is owed: nothing
+        (FINISHED), an answer from the user (WAITING), or more work on the next
+        call (IN_PROGRESS). The browser and the conversation survive all three.
 
         Raises BrowserUnavailable when no browser could be started; every other
         failure comes back as text.
@@ -284,9 +293,14 @@ class BrowserAgent:
         # session it did not open still has to introduce the task.
         first = not self.messages
 
+        reopened = False
         if self._session is None:
             self._session = BrowserSession(headless=self.headless, on_frame=self.on_frame)
             await self._session.start()
+            # A fresh browser part-way through a conversation means the last one
+            # went away — crashed, or closed by hand. The model has to be told,
+            # or it acts on a page that is not there any more.
+            reopened = not first
 
         if first:
             self.task = message
@@ -316,7 +330,8 @@ class BrowserAgent:
                     if context.strip()
                     else ""
                 )
-                human = FOLLOW_UP_TEMPLATE.format(
+                template = REOPENED_TEMPLATE if reopened else FOLLOW_UP_TEMPLATE
+                human = template.format(
                     message=message or "continue", context_line=context_line
                 )
                 human += "\n" + await session.get_page()
@@ -333,9 +348,10 @@ class BrowserAgent:
             url = session.current_url()
 
             if result is _FINISHED:
-                report = session.finished_report or "Done."
-                await self.close()
-                return BrowserOutcome(report, FINISHED, url)
+                # The browser stays open. A finished task is not a finished
+                # conversation, and the next message is usually about the same
+                # thing.
+                return BrowserOutcome(session.finished_report or "Done.", FINISHED, url)
 
             if isinstance(result, str):
                 return BrowserOutcome(result, WAITING, url)

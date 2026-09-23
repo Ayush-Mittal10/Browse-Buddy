@@ -28,7 +28,7 @@ import os
 from pathlib import Path
 
 from browser_agent import __version__, config
-from browser_agent.agent import FINISHED, BrowserAgent, BrowserUnavailable
+from browser_agent.agent import BrowserAgent, BrowserUnavailable
 from browser_agent.cli import describe_action
 
 logger = logging.getLogger(__name__)
@@ -289,14 +289,10 @@ def build_app():
 
                 say(type="report", text=outcome.text, state=outcome.state, url=outcome.url)
                 say(type="status", state="idle")
-                if outcome.state == FINISHED:
-                    # The agent closed its browser; the next task opens a fresh
-                    # one, so let go of the slot in the meantime.
-                    await agent.close()
-                    agent = None
-                    if held:
-                        browsers.release()
-                        held = False
+                # The agent is deliberately kept, finished or not. It holds the
+                # conversation, so discarding it here is what made a follow-up
+                # arrive with no memory of what was just asked or answered — the
+                # visitor is still in the same chat and expects it to know.
 
         except WebSocketDisconnect:
             pass

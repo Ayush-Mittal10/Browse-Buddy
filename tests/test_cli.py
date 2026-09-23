@@ -287,14 +287,17 @@ async def test_ctrl_c_and_ctrl_d_leave_quietly(monkeypatch, raised) -> None:
     assert await interactive(agent, out) == 0
 
 
-async def test_a_closed_browser_is_announced(monkeypatch) -> None:
+async def test_finishing_invites_a_follow_up(monkeypatch) -> None:
     out, buf = printer()
     agent = FakeAgent(BrowserOutcome("All done.", FINISHED, ""))
     replies = iter(["do it", "quit"])
     monkeypatch.setattr("browser_agent.cli._ainput", lambda prompt: _immediately(next(replies)))
 
     await interactive(agent, out)
-    assert "browser has closed" in buf.getvalue()
+    # The browser and the conversation both survive a finished task, so the
+    # prompt is to carry on rather than to start again.
+    assert "Ask a follow-up" in buf.getvalue()
+    assert "closed" not in buf.getvalue()
 
 
 # --- failure modes ------------------------------------------------------------
