@@ -1,10 +1,16 @@
 """Telling a bot check apart from the page that was wanted.
 
-Reproduced from a real run: every Google search from this browser lands on
-google.com/sorry/index, whether the query is typed into the box or opened as a
-/search URL, and whatever the query is. The page that comes back is short and
-ordinary-looking, so without this the agent treats it as a normal page and
-tries to interact with it.
+The page a bot check returns is short and ordinary-looking, so without this the
+agent treats it as a normal page and tries to interact with it.
+
+Google was once the example here: every search landed on google.com/sorry/index.
+That turned out to be two separate things, and both have since been fixed. The
+headers were one — we sent a Sec-CH-UA saying HeadlessChrome alongside a user
+agent saying Chrome, and sites that read both refused the mismatch. The other is
+that Google challenges a browser holding none of its cookies and *sets those
+cookies on the challenge page*, so the second request succeeds where the first
+did not. Measured after both fixes: four out of four cold searches return
+results. The retry is in `BrowserSession._retry_past_interstitial`.
 """
 
 from __future__ import annotations
@@ -60,22 +66,25 @@ def test_a_long_page_is_judged_by_its_url_only() -> None:
 def test_the_advice_says_not_to_solve_it() -> None:
     advice = blocked_advice("https://x.test/")
     assert "Do not attempt to solve it" in advice
-    # Reloading is the thing a model reaches for first, and it never works.
-    assert "reloading, waiting or trying another URL" in advice
-
-
-def test_google_gets_told_it_is_hopeless_specifically() -> None:
-    advice = blocked_advice("https://www.google.com/sorry/index")
-
-    # Measured: the home page loads, every search ends here, typing into the box
-    # is no different from opening a /search URL.
-    assert "Google blocks automated searching entirely" in advice
-    # The /html endpoint answers 403 now; the plain query form works and
-    # returns more results. Measured, not assumed.
-    assert "duckduckgo.com/?q=" in advice
-
-
-def test_other_sites_get_general_advice() -> None:
-    advice = blocked_advice("https://somewhere.test/challenge")
-    assert "Go to a different site" in advice
+    # By the time the model sees this the retry has already happened, so
+    # reloading really is spent — which was not true when the advice was written.
+    assert "reloading again will not change it" in advice
     assert "tell the user it is blocking" in advice
+
+
+def test_the_advice_offers_the_other_engines() -> None:
+    # It used to say "Google blocks automated searching entirely" and send the
+    # agent to one specific engine. Naming a single winner is what turned a
+    # fallback chain into a hardcoded choice; all three are named now, and one
+    # being blocked is explicitly not evidence about the others.
+    for url in ("https://www.google.com/sorry/index", "https://somewhere.test/challenge"):
+        advice = blocked_advice(url)
+        assert "blocks automated searching entirely" not in advice
+        assert "google.com/search?q=" in advice
+        assert "bing.com/search?q=" in advice
+        assert "duckduckgo.com/?q=" in advice
+
+
+def test_the_advice_does_not_depend_on_the_url() -> None:
+    # Nothing is host-specific any more, and the argument is optional.
+    assert blocked_advice("https://www.google.com/sorry/") == blocked_advice()

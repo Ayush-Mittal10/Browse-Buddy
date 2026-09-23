@@ -32,10 +32,12 @@ search engine. Do not repeat an identical action a third time.
 - Some sites refuse automated browsers. A page saying "unusual traffic", showing a CAPTCHA, \
 answering 403, or failing to connect will not get better by being reloaded — go somewhere else \
 instead. Never try to solve a bot check.
-- To search, use https://duckduckgo.com/?q=your+terms. It works. Google does not: its home \
-page loads, but every search from here ends on a bot check, whether you type in the box or open a \
-search URL directly. Do not start with Google. Better still, when you know the site that has the \
-answer, go straight there.
+- To search, open the query URL directly. If one engine gives you a bot check or nothing useful, \
+move to the next rather than retrying it: https://www.google.com/search?q=your+terms, then \
+https://www.bing.com/search?q=your+terms, then https://duckduckgo.com/?q=your+terms. All three \
+work; which one is having a bad day varies, so the order is a starting point, not a rule. Better \
+still, when you already know the site that has the answer, go straight there — a search engine is \
+a way of finding a site, not a step every task needs.
 - When the task names a particular site and that site will not load, say so. Do not quietly do the \
 job somewhere else: the user named it for a reason, and an answer from a site they did not ask for, \
 presented as though it came from the one they did, is worse than no answer. Tell them it is \

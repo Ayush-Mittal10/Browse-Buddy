@@ -202,27 +202,23 @@ def looks_blocked(url: str, page_text: str) -> bool:
     return any(phrase in text for phrase in _BLOCK_PHRASES)
 
 
-def blocked_advice(url: str) -> str:
-    """What to do about it, in terms the model can act on."""
-    host = (urlsplit(url).hostname or "").lower()
-    advice = (
-        "[This is a bot check, not the page you wanted. The site has decided this browser "
-        "is automated and will keep showing this — reloading, waiting or trying another "
-        "URL on the same site will not change it. Do not attempt to solve it."
+def blocked_advice(url: str = "") -> str:
+    """What to do about it, in terms the model can act on.
+
+    `url` is no longer read: the advice used to name Google as a lost cause and
+    now nothing is host-specific. Kept so callers need not change.
+    """
+    return (
+        "[This is a bot check, not the page you wanted. The request that landed here was "
+        "already the second one — the first was challenged too, and asking again is what "
+        "usually clears a site that only wanted to see cookies. This site wants more than "
+        "that, so reloading again will not change it and neither will another URL on the "
+        "same host. Do not attempt to solve it. Go somewhere else — if this was a search, the "
+        "other engines are https://www.google.com/search?q=, https://www.bing.com/search?q= "
+        "and https://duckduckgo.com/?q=, and one being blocked says nothing about the others. "
+        "If the task needs this particular site, tell the user it is blocking automated "
+        "access and let them decide.]"
     )
-    if "google." in host:
-        advice += (
-            " Google blocks automated searching entirely; its home page loads but every "
-            "search ends here. Use https://duckduckgo.com/?q=your+terms instead, "
-            "which works."
-        )
-    else:
-        advice += (
-            " Go to a different site. For searching, https://duckduckgo.com/?q=your+terms "
-            "works."
-        )
-    return advice + " If the task needs this particular site, tell the user it is blocking "\
-        "automated access and let them decide.]"
 
 
 # ── Session ──────────────────────────────────────────────────────────────────
@@ -245,6 +241,7 @@ class BrowserSession:
         self.pages: list = []
         self.notes: list[str] = []  # surfaced once, in the next snapshot
         self._nav_failures: dict[str, int] = {}  # host -> times it would not load
+        self._primed: set[str] = set()           # hosts whose bot check we already re-tried
         self._last_hit: dict[str, float] = {}    # host -> when we were last there
         self.blocked = False                     # the current page is a bot check
         self.last_screenshot: tuple[str, str] | None = None  # (base64, mime)
@@ -572,6 +569,24 @@ class BrowserSession:
                 else "Try again once, then try a different page or a search engine."
             )
             return await self._after(f"Could not open {url}: {_short_error(e)}. {advice}")
+        result = await self._opened(page, resp)
+        # _opened set self.blocked while it built that snapshot. A site that
+        # challenges a browser holding none of its cookies usually sets them on
+        # the challenge page itself, so the second request is the first one it
+        # treats as a returning visitor. Ask once more before giving up.
+        host = (urlsplit(url).hostname or "").lower()
+        if not self.blocked or host in self._primed:
+            return result
+        self._primed.add(host)
+        logger.info("Bot check on the first request to %s; asking again", host)
+        try:
+            resp = await page.goto(url, wait_until="domcontentloaded")
+        except Exception as e:
+            logger.info("Retry after the bot check failed: %s", _short_error(e))
+            return result
+        return await self._opened(page, resp)
+
+    async def _opened(self, page, resp) -> str:
         status = f" (HTTP {resp.status})" if resp is not None and resp.status >= 400 else ""
         return await self._after(f"Opened {page.url}{status}.")
 

@@ -342,3 +342,81 @@ async def test_the_hints_a_site_receives_agree_with_the_agent(session, serve) ->
 
     from_agent = re.search(r"Chrome/(\d+)", seen["user-agent"]).group(1)
     assert f'v="{from_agent}"' in seen["sec-ch-ua"]
+
+
+# --- the cold bot check -------------------------------------------------------
+#
+# Google challenges a browser carrying none of its cookies, sets those cookies on
+# the challenge page, and serves the results to the next request. Measured: from
+# a fresh browser the first search lands on /sorry/index and the second returns
+# ~50 links, for every query tried. So one retry is worth making — it is not
+# solving anything, it is asking again with what the site just handed us.
+#
+# The challenge is served at the requested URL here rather than as a redirect,
+# because that is the shape that a URL-only check would miss: Cloudflare answers
+# in place, and only Google sends you somewhere with /sorry/ in the path.
+
+CHALLENGE = "<title>Just a moment</title><p>Checking your browser before accessing</p>"
+REAL_PAGE = "<title>Results</title><a href=/a>A result</a>"
+
+
+def _challenging(challenge_first: int):
+    """Route handler answering the first `challenge_first` requests with a bot
+    check and the rest with a real page. Returns the handler and its request log.
+    """
+    log: list[str] = []
+
+    async def handler(route, request):
+        log.append(request.url)
+        body = CHALLENGE if len(log) <= challenge_first else REAL_PAGE
+        await route.fulfill(status=200, content_type="text/html", body=body)
+
+    return handler, log
+
+
+@pytest.mark.asyncio
+async def test_a_cold_bot_check_is_retried_and_clears(session) -> None:
+    handler, log = _challenging(challenge_first=1)
+    await session._context.route("https://cold.test/**", handler)
+
+    out = await session.navigate("https://cold.test/search?q=trains")
+
+    assert session.blocked is False
+    assert "A result" in out
+    assert len(log) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_site_that_means_it_is_still_reported_blocked(session) -> None:
+    handler, log = _challenging(challenge_first=99)
+    await session._context.route("https://firm.test/**", handler)
+
+    out = await session.navigate("https://firm.test/search?q=trains")
+
+    assert session.blocked is True
+    assert "bot check" in out.lower()
+    assert len(log) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_retry_happens_once_per_host(session) -> None:
+    # Otherwise every navigation to a site that always challenges costs two
+    # requests, which is how an IP earns a harder block than it started with.
+    handler, log = _challenging(challenge_first=99)
+    await session._context.route("https://firm.test/**", handler)
+
+    await session.navigate("https://firm.test/search?q=one")
+    await session.navigate("https://firm.test/search?q=two")
+
+    assert len(log) == 3
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_page_is_fetched_once(session) -> None:
+    handler, log = _challenging(challenge_first=0)
+    await session._context.route("https://plain.test/**", handler)
+
+    await session.navigate("https://plain.test/")
+
+    assert session.blocked is False
+    assert len(log) == 1

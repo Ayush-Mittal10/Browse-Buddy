@@ -426,6 +426,19 @@ def test_the_prompt_names_no_product() -> None:
         assert word not in lowered
 
 
+def test_the_prompt_offers_search_engines_to_fall_through() -> None:
+    # This started as "Bing and DuckDuckGo work; Google usually blocks", became
+    # a single hardcoded engine once Google was measured blocking, and stayed
+    # that way after the fix that unblocked it. Measured since: all three return
+    # ~50-90 links from a cold browser. Whichever is having a bad day, there
+    # must be somewhere to fall through to.
+    from browser_agent.prompts import SYSTEM_PROMPT
+
+    for engine in ("google.com/search?q=", "bing.com/search?q=", "duckduckgo.com/?q="):
+        assert engine in SYSTEM_PROMPT
+    assert "move to the next" in SYSTEM_PROMPT
+
+
 # --- getting stuck ------------------------------------------------------------
 
 
