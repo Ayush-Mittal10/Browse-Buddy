@@ -37,6 +37,7 @@ async def rendered(session):
                   text: el.textContent,
                   html: el.innerHTML,
                   code: [...el.querySelectorAll('code')].map(c => c.textContent),
+                  starts: [...el.querySelectorAll('ol')].map(o => o.getAttribute('start')),
                   imgs: el.querySelectorAll('img').length,
                   scripts: el.querySelectorAll('script').length,
                 };
@@ -153,4 +154,18 @@ async def test_bold_and_lists_still_render(rendered) -> None:
     out = await rendered("**Zolo:** ₹5,200\n\n* one\n* two\n\n1. first\n2. second")
     assert "<strong>Zolo:</strong>" in out["html"]
     assert out["html"].count("<li>") == 4
-    assert "<ul>" in out["html"] and "<ol>" in out["html"]
+    assert "<ul>" in out["html"] and "<ol start=" in out["html"]
+
+
+async def test_a_numbered_list_keeps_counting_past_its_bullets(rendered) -> None:
+    """The shape every "here are your options" report comes back in.
+
+    Details hang off each entry as bullets, which end the numbered list. What
+    the reader must still see is 1, 2, 3 — not three entries all called 1.
+    """
+    out = await rendered(
+        "1. Hasdeo Express\n- Departure: 06:30\n"
+        "2. Wainganga Express\n- Departure: 08:05\n"
+        "3. Chhattisgarh Express\n- Departure: 11:33"
+    )
+    assert out["starts"] == ["1", "2", "3"]

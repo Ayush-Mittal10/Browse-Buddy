@@ -175,11 +175,19 @@ function markdown(text) {
     }
 
     const bullet = lineText.match(/^[-*•]\s+(.*)$/);
-    const numbered = lineText.match(/^\d+[.)]\s+(.*)$/);
+    const numbered = lineText.match(/^(\d+)[.)]\s+(.*)$/);
     if (bullet || numbered) {
       const want = bullet ? 'ul' : 'ol';
-      if (list !== want) { closeList(); html.push('<' + want + '>'); list = want; }
-      html.push(`<li>${inline((bullet || numbered)[1])}</li>`);
+      // A report usually reads "1. Train\n- Departure…\n2. Train", and those
+      // bullets close the ol. Reopening it would restart the count at 1, so
+      // the number the model wrote is carried over as `start` — it is the one
+      // that matches the prose. Digits only, straight from the pattern above.
+      if (list !== want) {
+        closeList();
+        html.push(want === 'ol' ? `<ol start="${numbered[1]}">` : '<ul>');
+        list = want;
+      }
+      html.push(`<li>${inline(bullet ? bullet[1] : numbered[2])}</li>`);
       continue;
     }
 
